@@ -61,20 +61,20 @@ function displayStatus(state) {
     return "RLD";
   }
 
-  if (state.pageState === "frozen") {
-    return "FRZ";
+  if (state.networkState === "error") {
+    return "ERR";
   }
 
   if (state.networkState === "generating") {
     return "GEN";
   }
 
-  if (state.networkState === "done") {
-    return "DONE";
+  if (state.networkState === "done" && state.pageState === "frozen") {
+    return "FRZ";
   }
 
-  if (state.networkState === "error") {
-    return "ERR";
+  if (state.networkState === "done") {
+    return "DONE";
   }
 
   return "IDLE";

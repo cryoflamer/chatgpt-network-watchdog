@@ -108,6 +108,10 @@ function syncStateFromConversation(state, tabUrl) {
     return false;
   }
 
+  if (state.networkState === "reloading" || state.pageState === "reloading") {
+    return false;
+  }
+
   state.conversationId = conversationId;
   const conversation = conversations.get(conversationId);
   if (!conversation || !conversation.updatedAt) {
@@ -276,20 +280,20 @@ function badgeForState(state) {
     return { text: "RLD", color: "#1d4ed8" };
   }
 
-  if (state.pageState === "frozen") {
-    return { text: "FRZ", color: "#5c2d91" };
+  if (state.networkState === "error") {
+    return { text: "ERR", color: "#991b1b" };
   }
 
   if (state.networkState === "generating") {
     return { text: "GEN", color: "#7a5a1f" };
   }
 
-  if (state.networkState === "done") {
-    return { text: "DONE", color: "#1f6f3a" };
+  if (state.networkState === "done" && state.pageState === "frozen") {
+    return { text: "FRZ", color: "#5c2d91" };
   }
 
-  if (state.networkState === "error") {
-    return { text: "ERR", color: "#991b1b" };
+  if (state.networkState === "done") {
+    return { text: "DONE", color: "#1f6f3a" };
   }
 
   return { text: "", color: "#444444" };
