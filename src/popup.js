@@ -57,6 +57,10 @@ function formatChatPath(url) {
 }
 
 function displayStatus(state) {
+  if (state.networkState === "reloading" || state.pageState === "reloading") {
+    return "RLD";
+  }
+
   if (state.pageState === "frozen") {
     return "FRZ";
   }
@@ -77,6 +81,10 @@ function displayStatus(state) {
 }
 
 function statusClass(status) {
+  if (status === "RLD") {
+    return "reloading";
+  }
+
   if (status === "FRZ") {
     return "frozen";
   }
@@ -207,7 +215,9 @@ function renderState(state, tabs = currentTabs) {
   autoRecoverFrozenTabsInput.checked = Boolean(state.settings?.autoRecoverFrozenTabs);
   renderTabs(tabs);
 
-  if (state.networkState === "error") {
+  if (state.networkState === "reloading" || state.pageState === "reloading") {
+    hintEl.textContent = "The ChatGPT tab is reloading. Waiting for the page to reconnect.";
+  } else if (state.networkState === "error") {
     hintEl.textContent = "Network error detected. Reloading the current ChatGPT tab is safer than opening a fresh one.";
   } else if (state.pageState === "frozen") {
     hintEl.textContent = state.settings?.autoRecoverFrozenTabs
