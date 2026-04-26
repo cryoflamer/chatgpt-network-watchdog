@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>ChatGPT Network Watchdog</title>
+    <style>
+      body {
+        min-width: 280px;
+        margin: 0;
+        padding: 12px;
+        font: 13px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #111827;
+        color: #f9fafb;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 14px;
+      }
+
+      dl {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 6px 10px;
+        margin: 0 0 12px;
+      }
+
+      dt {
+        color: #9ca3af;
+      }
+
+      dd {
+        margin: 0;
+        text-align: right;
+        overflow-wrap: anywhere;
+      }
+
+      .status {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-weight: 700;
+      }
+
+      .status-idle { background: #374151; }
+      .status-generating { background: #854d0e; }
+      .status-done { background: #166534; }
+      .status-frozen { background: #5b21b6; }
+      .status-error { background: #991b1b; }
+
+      button {
+        width: 100%;
+        border: 0;
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: #f9fafb;
+        color: #111827;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        cursor: default;
+        opacity: .55;
+      }
+
+      .hint {
+        margin-top: 10px;
+        color: #9ca3af;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>ChatGPT Network Watchdog</h1>
+    <dl>
+      <dt>Status</dt><dd><span id="status" class="status status-idle">IDLE</span></dd>
+      <dt>Network</dt><dd id="network">unknown</dd>
+      <dt>Page</dt><dd id="page">unknown</dd>
+      <dt>Duration</dt><dd id="duration">n/a</dd>
+      <dt>Done</dt><dd id="done">never</dd>
+      <dt>Error</dt><dd id="error">none</dd>
+      <dt>Last</dt><dd id="last">n/a</dd>
+    </dl>
+    <button id="openFreshChat" type="button">Open fresh chat</button>
+    <div id="hint" class="hint">State is tracked by the background service worker.</div>
+    <script src="src/popup.js"></script>
+  </body>
+</html>

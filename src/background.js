@@ -1,6 +1,7 @@
 const GENERATION_PATH = "/backend-api/f/conversation";
 const HEARTBEAT_TIMEOUT_MS = 15000;
 const WATCH_INTERVAL_MS = 3000;
+const DONE_RESET_MS = 120000;
 const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
 const DIAGNOSTIC_LOG = false;
 
@@ -80,6 +81,7 @@ function publicState(state) {
     pageState: state.pageState,
     backgroundState: state.backgroundState,
     generationDurationMs: generationDurationMs(state),
+    lastHeartbeatAt: state.lastHeartbeatAt,
     lastDoneAt: state.lastDoneAt,
     lastErrorAt: state.lastErrorAt,
     lastError: state.lastError,
@@ -90,28 +92,36 @@ function publicState(state) {
   };
 }
 
-function updateBadge(state) {
-  const textByState = {
-    generating: "GEN",
-    done: "DONE",
-    error: "ERR",
-    idle: "IDLE",
-  };
+function badgeForState(state) {
+  if (state.pageState === "frozen") {
+    return { text: "FRZ", color: "#5c2d91" };
+  }
 
-  const colorByState = {
-    generating: "#7a1f1f",
-    done: "#1f6f3a",
-    error: "#7a5a1f",
-    idle: "#444444",
-  };
+  if (state.networkState === "generating") {
+    return { text: "GEN", color: "#7a5a1f" };
+  }
+
+  if (state.networkState === "done") {
+    return { text: "DONE", color: "#1f6f3a" };
+  }
+
+  if (state.networkState === "error") {
+    return { text: "ERR", color: "#991b1b" };
+  }
+
+  return { text: "", color: "#444444" };
+}
+
+function updateBadge(state) {
+  const badge = badgeForState(state);
 
   chrome.action.setBadgeText({
     tabId: state.tabId,
-    text: state.pageState === "frozen" ? "FRZ" : textByState[state.networkState] || "",
+    text: badge.text,
   });
   chrome.action.setBadgeBackgroundColor({
     tabId: state.tabId,
-    color: state.pageState === "frozen" ? "#5c2d91" : colorByState[state.networkState] || "#444444",
+    color: badge.color,
   });
 }
 
@@ -130,6 +140,52 @@ function notifyTab(state) {
   );
 }
 
+function markBackendRequest(details) {
+  if (!isChatGptBackendRequest(details) || details.tabId < 0) {
+    return;
+  }
+
+  const state = getTabState(details.tabId);
+  state.lastBackendRequestAt = now();
+  state.lastBackendRequestUrl = details.url;
+  notifyTab(state);
+}
+
+function openFreshChat(state, sendResponse) {
+  chrome.tabs.create({ url: "https://chatgpt.com/", active: true }, (tab) => {
+    if (chrome.runtime.lastError) {
+      state.lastActionAt = now();
+      state.lastAction = `open failed: ${chrome.runtime.lastError.message}`;
+      notifyTab(state);
+      sendResponse({ ok: false, error: chrome.runtime.lastError.message, state: publicState(state) });
+      return;
+    }
+
+    state.lastActionAt = now();
+    state.lastAction = `fresh chat opened: ${tab?.id ?? "unknown"}`;
+    console.log("[CTR:BG] fresh ChatGPT tab opened", {
+      sourceTabId: state.tabId,
+      newTabId: tab?.id,
+    });
+    notifyTab(state);
+    sendResponse({ ok: true, tabId: tab?.id, state: publicState(state) });
+  });
+}
+
+function getActiveChatGptTab(callback) {
+  chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
+    const activeTab = activeTabs?.[0];
+    if (activeTab?.id && activeTab.url?.startsWith("https://chatgpt.com/")) {
+      callback(activeTab);
+      return;
+    }
+
+    chrome.tabs.query({ url: "https://chatgpt.com/*", currentWindow: true }, (chatTabs) => {
+      callback(chatTabs?.[0] || activeTab || null);
+    });
+  });
+}
+
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (isChatGptBackendRequest(details)) {
@@ -140,13 +196,7 @@ chrome.webRequest.onBeforeRequest.addListener(
         type: details.type,
         url: details.url,
       });
-
-      if (details.tabId >= 0) {
-        const state = getTabState(details.tabId);
-        state.lastBackendRequestAt = now();
-        state.lastBackendRequestUrl = details.url;
-        notifyTab(state);
-      }
+      markBackendRequest(details);
     }
 
     if (!isGenerationRequest(details) || details.tabId < 0) {
@@ -255,12 +305,39 @@ chrome.webRequest.onErrorOccurred.addListener(
 );
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!sender.tab?.id) {
+  const senderTabId = sender.tab?.id;
+
+  if (message?.type === "watchdog-popup-state") {
+    getActiveChatGptTab((tab) => {
+      if (!tab?.id) {
+        sendResponse({ ok: false, error: "No active tab found" });
+        return;
+      }
+
+      const state = getTabState(tab.id);
+      sendResponse({ ok: true, state: publicState(state), tab: { id: tab.id, url: tab.url } });
+    });
+    return true;
+  }
+
+  if (message?.type === "watchdog-popup-open-fresh-chat") {
+    getActiveChatGptTab((tab) => {
+      if (!tab?.id) {
+        sendResponse({ ok: false, error: "No ChatGPT tab found" });
+        return;
+      }
+
+      openFreshChat(getTabState(tab.id), sendResponse);
+    });
+    return true;
+  }
+
+  if (!senderTabId) {
     debugLog("message without tab", { message });
     return false;
   }
 
-  const state = getTabState(sender.tab.id);
+  const state = getTabState(senderTabId);
 
   if (message?.type === "watchdog-heartbeat") {
     state.lastHeartbeatAt = now();
@@ -276,7 +353,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.pageState = "alive";
     state.backgroundState = "connected";
     console.log("[CTR:BG] content script connected", {
-      tabId: sender.tab.id,
+      tabId: senderTabId,
       url: sender.tab.url,
       message,
     });
@@ -286,34 +363,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "watchdog-open-fresh-chat") {
-    chrome.tabs.create({ url: "https://chatgpt.com/", active: true }, (tab) => {
-      if (chrome.runtime.lastError) {
-        state.lastActionAt = now();
-        state.lastAction = `open failed: ${chrome.runtime.lastError.message}`;
-        notifyTab(state);
-        sendResponse({ ok: false, error: chrome.runtime.lastError.message, state: publicState(state) });
-        return;
-      }
-
-      state.lastActionAt = now();
-      state.lastAction = `fresh chat opened: ${tab?.id ?? "unknown"}`;
-      console.log("[CTR:BG] fresh ChatGPT tab opened", {
-        sourceTabId: sender.tab.id,
-        newTabId: tab?.id,
-      });
-      notifyTab(state);
-      sendResponse({ ok: true, tabId: tab?.id, state: publicState(state) });
-    });
+    openFreshChat(state, sendResponse);
     return true;
   }
 
   if (message?.type === "watchdog-get-state") {
-    debugLog("state requested", { tabId: sender.tab.id });
+    debugLog("state requested", { tabId: senderTabId });
     sendResponse({ ok: true, state: publicState(state) });
     return true;
   }
 
-  debugLog("unknown message", { tabId: sender.tab.id, message });
+  debugLog("unknown message", { tabId: senderTabId, message });
   return false;
 });
 
@@ -331,6 +391,8 @@ setInterval(() => {
   const currentTime = now();
 
   for (const state of tabs.values()) {
+    let changed = false;
+
     if (state.lastHeartbeatAt && currentTime - state.lastHeartbeatAt > HEARTBEAT_TIMEOUT_MS) {
       if (state.pageState !== "frozen") {
         state.pageState = "frozen";
@@ -339,8 +401,17 @@ setInterval(() => {
           msSinceHeartbeat: currentTime - state.lastHeartbeatAt,
           networkState: state.networkState,
         });
-        notifyTab(state);
+        changed = true;
       }
+    }
+
+    if (state.networkState === "done" && state.lastDoneAt && currentTime - state.lastDoneAt > DONE_RESET_MS) {
+      state.networkState = "idle";
+      changed = true;
+    }
+
+    if (changed) {
+      notifyTab(state);
     }
   }
 }, WATCH_INTERVAL_MS);
