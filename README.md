@@ -69,3 +69,8 @@ Planned follow-up patches:
 1. Add optional automatic tab rotation when `network done + page frozen` is detected.
 2. Add settings for timeouts and auto-action behavior.
 3. Add defensive handling for multiple ChatGPT tabs and regenerated responses.
+
+
+## Hotkey
+
+Use `Alt+Shift+N` to open a fresh ChatGPT tab from the current browser window.

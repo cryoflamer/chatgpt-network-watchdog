@@ -40,5 +40,13 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "commands": {
+    "open-fresh-chat": {
+      "suggested_key": {
+        "default": "Alt+Shift+N"
+      },
+      "description": "Open a fresh ChatGPT tab"
+    }
   }
 }

@@ -151,13 +151,13 @@ function markBackendRequest(details) {
   notifyTab(state);
 }
 
-function openFreshChat(state, sendResponse) {
+function openFreshChat(state, callback) {
   chrome.tabs.create({ url: "https://chatgpt.com/", active: true }, (tab) => {
     if (chrome.runtime.lastError) {
       state.lastActionAt = now();
       state.lastAction = `open failed: ${chrome.runtime.lastError.message}`;
       notifyTab(state);
-      sendResponse({ ok: false, error: chrome.runtime.lastError.message, state: publicState(state) });
+      callback?.({ ok: false, error: chrome.runtime.lastError.message, state: publicState(state) });
       return;
     }
 
@@ -168,7 +168,18 @@ function openFreshChat(state, sendResponse) {
       newTabId: tab?.id,
     });
     notifyTab(state);
-    sendResponse({ ok: true, tabId: tab?.id, state: publicState(state) });
+    callback?.({ ok: true, tabId: tab?.id, state: publicState(state) });
+  });
+}
+
+function openFreshChatForCurrentWindow(callback) {
+  getActiveChatGptTab((tab) => {
+    if (!tab?.id) {
+      callback?.({ ok: false, error: "No active tab found" });
+      return;
+    }
+
+    openFreshChat(getTabState(tab.id), callback);
   });
 }
 
@@ -375,6 +386,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   debugLog("unknown message", { tabId: senderTabId, message });
   return false;
+});
+
+
+chrome.commands.onCommand.addListener((command) => {
+  if (command !== "open-fresh-chat") {
+    return;
+  }
+
+  openFreshChatForCurrentWindow((response) => {
+    if (!response?.ok) {
+      console.warn("[CTR:BG] hotkey open fresh chat failed", response);
+    }
+  });
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
