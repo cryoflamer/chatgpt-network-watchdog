@@ -2,14 +2,23 @@ const GENERATION_PATH = "/backend-api/f/conversation";
 const HEARTBEAT_TIMEOUT_MS = 15000;
 const WATCH_INTERVAL_MS = 3000;
 const DONE_RESET_MS = 120000;
+const AUTO_RECOVER_DEBOUNCE_MS = 60000;
 const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
 const DIAGNOSTIC_LOG = false;
 
 const requests = new Map();
 const tabs = new Map();
+const settings = {
+  autoRecoverFrozenTabs: false,
+};
 
 console.log("[CTR:BG] service worker loaded", {
   href: chrome.runtime.getURL("src/background.js"),
+});
+
+chrome.storage.local.get({ autoRecoverFrozenTabs: false }, (stored) => {
+  settings.autoRecoverFrozenTabs = Boolean(stored.autoRecoverFrozenTabs);
+  console.log("[CTR:BG] settings loaded", settings);
 });
 
 function now() {
@@ -59,6 +68,7 @@ function getTabState(tabId) {
       lastBackendRequestUrl: null,
       lastActionAt: null,
       lastAction: null,
+      lastAutoRecoverAt: null,
     });
   }
 
@@ -89,6 +99,8 @@ function publicState(state) {
     lastBackendRequestUrl: state.lastBackendRequestUrl,
     lastActionAt: state.lastActionAt,
     lastAction: state.lastAction,
+    lastAutoRecoverAt: state.lastAutoRecoverAt,
+    settings: { ...settings },
   };
 }
 
@@ -224,6 +236,41 @@ function openFreshChatForCurrentWindow(callback) {
   });
 }
 
+function autoRecoverFrozenTab(state) {
+  if (!settings.autoRecoverFrozenTabs) {
+    return;
+  }
+
+  if (state.networkState !== "done" || state.pageState !== "frozen") {
+    return;
+  }
+
+  const currentTime = now();
+  if (state.lastAutoRecoverAt && currentTime - state.lastAutoRecoverAt < AUTO_RECOVER_DEBOUNCE_MS) {
+    return;
+  }
+
+  state.lastAutoRecoverAt = currentTime;
+  state.lastActionAt = currentTime;
+  state.lastAction = "auto-recovery requested for frozen tab";
+  notifyTab(state);
+
+  chrome.tabs.get(state.tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab?.id) {
+      state.lastActionAt = now();
+      state.lastAction = `auto-recovery failed: ${chrome.runtime.lastError?.message || "tab not found"}`;
+      notifyTab(state);
+      return;
+    }
+
+    console.warn("[CTR:BG] auto-recovering frozen ChatGPT tab", {
+      sourceTabId: state.tabId,
+      sourceUrl: tab.url,
+    });
+    openFreshChat(state, null, tab.url);
+  });
+}
+
 function getActiveChatGptTab(callback) {
   chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
     const activeTab = activeTabs?.[0];
@@ -315,6 +362,7 @@ chrome.webRequest.onCompleted.addListener(
 
     requests.delete(details.requestId);
     notifyTab(state);
+    autoRecoverFrozenTab(state);
   },
   REQUEST_FILTER,
 );
@@ -392,6 +440,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       reloadChatGptTab(getTabState(tab.id), sendResponse);
+    });
+    return true;
+  }
+
+  if (message?.type === "watchdog-popup-set-auto-recover") {
+    settings.autoRecoverFrozenTabs = Boolean(message.enabled);
+    chrome.storage.local.set({ autoRecoverFrozenTabs: settings.autoRecoverFrozenTabs }, () => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+
+      getActiveChatGptTab((tab) => {
+        const state = tab?.id ? getTabState(tab.id) : null;
+        if (state) {
+          state.lastActionAt = now();
+          state.lastAction = settings.autoRecoverFrozenTabs
+            ? "auto-recovery enabled"
+            : "auto-recovery disabled";
+          notifyTab(state);
+          autoRecoverFrozenTab(state);
+        }
+
+        sendResponse({
+          ok: true,
+          state: state ? publicState(state) : null,
+          settings: { ...settings },
+        });
+      });
     });
     return true;
   }
@@ -488,6 +565,7 @@ setInterval(() => {
         });
         changed = true;
       }
+      autoRecoverFrozenTab(state);
     }
 
     if (state.networkState === "done" && state.lastDoneAt && currentTime - state.lastDoneAt > DONE_RESET_MS) {

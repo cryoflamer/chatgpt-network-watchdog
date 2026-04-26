@@ -5,7 +5,8 @@
   "description": "Detects ChatGPT response completion through backend network requests and monitors frozen tabs.",
   "permissions": [
     "tabs",
-    "webRequest"
+    "webRequest",
+    "storage"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",

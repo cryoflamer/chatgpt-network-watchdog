@@ -73,6 +73,19 @@
         color: #f9fafb;
       }
 
+      .setting {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+        color: #d1d5db;
+        font-size: 12px;
+      }
+
+      .setting input {
+        margin: 0;
+      }
+
       .hint {
         margin-top: 10px;
         color: #9ca3af;
@@ -93,6 +106,10 @@
     </dl>
     <button id="openFreshChat" type="button">Open current chat in fresh tab</button>
     <button id="reloadTab" class="secondary" type="button" disabled>Reload tab</button>
+    <label class="setting">
+      <input id="autoRecoverFrozenTabs" type="checkbox">
+      Auto-recover frozen tabs
+    </label>
     <div id="hint" class="hint">State is tracked by the background service worker. Hotkey: Alt+Shift+N opens the current chat in a fresh tab.</div>
     <script src="src/popup.js"></script>
   </body>

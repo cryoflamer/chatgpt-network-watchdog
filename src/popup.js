@@ -8,6 +8,7 @@ const lastEl = document.getElementById("last");
 const hintEl = document.getElementById("hint");
 const openFreshChatButton = document.getElementById("openFreshChat");
 const reloadTabButton = document.getElementById("reloadTab");
+const autoRecoverFrozenTabsInput = document.getElementById("autoRecoverFrozenTabs");
 
 let currentState = null;
 
@@ -76,11 +77,14 @@ function renderState(state) {
 
   openFreshChatButton.disabled = !(state.networkState === "done" || state.pageState === "frozen");
   reloadTabButton.disabled = state.networkState !== "error";
+  autoRecoverFrozenTabsInput.checked = Boolean(state.settings?.autoRecoverFrozenTabs);
 
   if (state.networkState === "error") {
     hintEl.textContent = "Network error detected. Reloading the current ChatGPT tab is safer than opening a fresh one.";
   } else if (state.pageState === "frozen") {
-    hintEl.textContent = "The page heartbeat is stale. Opening a fresh chat is safe.";
+    hintEl.textContent = state.settings?.autoRecoverFrozenTabs
+      ? "The page heartbeat is stale. Auto-recovery can open this chat in a fresh tab."
+      : "The page heartbeat is stale. Opening a fresh chat is safe.";
   } else if (state.networkState === "done") {
     hintEl.textContent = "The response has finished at the network level. Alt+Shift+N opens the current chat in a fresh tab.";
   } else if (state.networkState === "generating") {
@@ -159,5 +163,38 @@ reloadTabButton.addEventListener("click", () => {
   });
 });
 
+
+autoRecoverFrozenTabsInput.addEventListener("change", () => {
+  autoRecoverFrozenTabsInput.disabled = true;
+
+  chrome.runtime.sendMessage(
+    {
+      type: "watchdog-popup-set-auto-recover",
+      enabled: autoRecoverFrozenTabsInput.checked,
+    },
+    (response) => {
+      autoRecoverFrozenTabsInput.disabled = false;
+
+      if (chrome.runtime.lastError) {
+        hintEl.textContent = chrome.runtime.lastError.message;
+        autoRecoverFrozenTabsInput.checked = Boolean(currentState?.settings?.autoRecoverFrozenTabs);
+        return;
+      }
+
+      if (!response?.ok) {
+        hintEl.textContent = response?.error || "Unable to update auto-recovery setting.";
+        autoRecoverFrozenTabsInput.checked = Boolean(currentState?.settings?.autoRecoverFrozenTabs);
+        return;
+      }
+
+      if (response.state) {
+        renderState(response.state);
+      } else if (currentState) {
+        currentState.settings = response.settings || currentState.settings;
+        renderState(currentState);
+      }
+    },
+  );
+});
 requestState();
 setInterval(requestState, 1000);

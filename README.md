@@ -19,19 +19,16 @@ When this request completes, the answer has arrived from the backend even if the
 
 ## Current MVP
 
-This initial version does not auto-close or auto-open tabs. It only observes and displays state:
+The extension observes ChatGPT runtime state from the background worker and exposes safe recovery actions:
 
 - Tracks `/backend-api/f/conversation` request start, completion, and errors.
 - Maintains per-tab network state in the extension background worker.
 - Sends a lightweight heartbeat from the ChatGPT tab to detect page responsiveness.
-- Shows a small debug panel on ChatGPT pages with:
-  - network state,
-  - page heartbeat state,
-  - generation duration,
-  - last completion/error time.
-- Updates the extension badge with compact states.
-- Shows an **Open current chat in fresh tab** button after generation completion.
+- Updates the extension badge with compact states: `GEN`, `DONE`, `FRZ`, and `ERR`.
+- Shows popup diagnostics for network state, page heartbeat, generation duration, last request, and errors.
+- Shows an **Open current chat in fresh tab** button after generation completion or freeze detection.
 - Shows a **Reload tab** button for network error states, where opening a fresh tab may not help.
+- Provides an optional **Auto-recover frozen tabs** mode that opens the current chat URL in a fresh tab only when the backend response is done and the page heartbeat is stale.
 
 ## Install in Opera / Chrome
 
@@ -43,7 +40,7 @@ This initial version does not auto-close or auto-open tabs. It only observes and
 
 ## Expected behavior
 
-During generation, the debug panel should show something like:
+During generation, the popup and badge should show something like:
 
 ```text
 Network: generating
@@ -67,10 +64,9 @@ Page: frozen
 
 Planned follow-up patches:
 
-1. Add optional automatic tab rotation when `network done + page frozen` is detected.
-2. Add settings for timeouts and auto-action behavior.
-3. Add defensive handling for multiple ChatGPT tabs and regenerated responses.
-
+1. Add settings for heartbeat and auto-recovery timeouts.
+2. Add defensive handling for multiple ChatGPT tabs and regenerated responses.
+3. Add optional sound alerts for DONE, FRZ, and ERR state changes.
 
 ## Hotkey
 
@@ -79,3 +75,14 @@ Use `Alt+Shift+N` to open the current ChatGPT conversation URL in a fresh tab. I
 ## Error recovery
 
 When the state is `ERR`, the popup enables **Reload tab**. This is intentionally separate from **Open current chat in fresh tab** because transport-level errors such as `net::ERR_QUIC_PROTOCOL_ERROR` can affect new tabs too. Reloading the current tab is the safer first recovery action.
+
+## Frozen-tab auto-recovery
+
+Auto-recovery is off by default and can be enabled from the popup. When enabled, it only acts on the safe frozen-tab condition:
+
+```text
+Network: done
+Page: frozen
+```
+
+In that state, the backend response has completed but the content script heartbeat is stale. The extension opens the current chat URL in a fresh tab and leaves the old tab open. It does not auto-recover `ERR` states.
