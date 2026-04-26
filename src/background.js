@@ -235,8 +235,8 @@ function publicState(state) {
     lastActionAt: state.lastActionAt,
     lastAction: state.lastAction,
     lastAutoRecoverAt: state.lastAutoRecoverAt,
-    conversationId: state.conversationId,
-    mirroredConversationState: state.mirroredConversationState,
+    lastReloadStartedAt: state.lastReloadStartedAt,
+    lastReloadCompletedAt: state.lastReloadCompletedAt,
     settings: { ...settings },
   };
 }
@@ -272,6 +272,10 @@ function getChatGptTabs(callback) {
 }
 
 function badgeForState(state) {
+  if (state.networkState === "reloading" || state.pageState === "reloading") {
+    return { text: "RLD", color: "#1d4ed8" };
+  }
+
   if (state.pageState === "frozen") {
     return { text: "FRZ", color: "#5c2d91" };
   }
@@ -372,7 +376,34 @@ function openFreshChat(state, callback, sourceUrl = null) {
 }
 
 
+function markTabReloading(state, source = "tab reloading") {
+  state.networkState = "reloading";
+  state.pageState = "reloading";
+  state.currentRequestId = null;
+  state.lastReloadStartedAt = now();
+  state.lastActionAt = state.lastReloadStartedAt;
+  state.lastAction = source;
+  notifyTab(state);
+}
+
+function completeTabReload(state) {
+  if (state.networkState === "reloading") {
+    state.networkState = "idle";
+  }
+
+  if (state.pageState === "reloading") {
+    state.pageState = "unknown";
+  }
+
+  state.lastReloadCompletedAt = now();
+  state.lastActionAt = state.lastReloadCompletedAt;
+  state.lastAction = "tab reload completed";
+  notifyTab(state);
+}
+
 function reloadChatGptTab(state, callback) {
+  markTabReloading(state, "tab reload requested");
+
   chrome.tabs.reload(state.tabId, {}, () => {
     if (chrome.runtime.lastError) {
       state.lastActionAt = now();
@@ -382,8 +413,6 @@ function reloadChatGptTab(state, callback) {
       return;
     }
 
-    state.lastActionAt = now();
-    state.lastAction = "tab reload requested";
     console.log("[CTR:BG] ChatGPT tab reload requested", {
       tabId: state.tabId,
     });
@@ -711,7 +740,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.lastHeartbeatAt = now();
     state.pageState = "alive";
     state.backgroundState = "connected";
-    syncStateFromConversation(state, sender.tab?.url);
+    if (state.networkState === "reloading") {
+      state.networkState = "idle";
+    }
     notifyTab(state);
     sendResponse({ ok: true, state: publicState(state) });
     return true;
@@ -721,7 +752,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.lastHeartbeatAt = now();
     state.pageState = "alive";
     state.backgroundState = "connected";
-    syncStateFromConversation(state, sender.tab?.url);
+    if (state.networkState === "reloading") {
+      state.networkState = "idle";
+    }
     console.log("[CTR:BG] content script connected", {
       tabId: senderTabId,
       url: sender.tab.url,
@@ -766,6 +799,28 @@ chrome.commands.onCommand.addListener((command) => {
       console.warn("[CTR:BG] hotkey open fresh chat failed", response);
     }
   });
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const url = tab?.url || changeInfo.url || "";
+  if (!url.startsWith("https://chatgpt.com/")) {
+    return;
+  }
+
+  const state = getTabState(tabId);
+
+  if (changeInfo.status === "loading") {
+    if (state.networkState !== "generating") {
+      markTabReloading(state, "tab started loading");
+    }
+    return;
+  }
+
+  if (changeInfo.status === "complete") {
+    if (state.networkState === "reloading" || state.pageState === "reloading") {
+      completeTabReload(state);
+    }
+  }
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
