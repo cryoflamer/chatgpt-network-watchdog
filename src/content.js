@@ -44,6 +44,18 @@ function formatDuration(durationMs) {
   return `${(durationMs / 1000).toFixed(1)}s`;
 }
 
+function formatBackendPath(url) {
+  if (!url) {
+    return null;
+  }
+
+  try {
+    return new URL(url).pathname;
+  } catch (_error) {
+    return url;
+  }
+}
+
 function panelColor(state) {
   if (state.pageState === "frozen") {
     return "#5c2d91";
@@ -70,10 +82,13 @@ function renderState(state) {
   const panel = ensurePanel();
   panel.style.background = panelColor(state);
   panel.textContent = [
+    `BG: ${state.backgroundState || "unknown"}`,
     `Network: ${state.networkState}`,
     `Page: ${state.pageState}`,
     `Duration: ${formatDuration(state.generationDurationMs)}`,
     `Done: ${formatAge(state.lastDoneAt)}`,
+    state.lastBackendRequestAt ? `Backend: ${formatAge(state.lastBackendRequestAt)}` : null,
+    state.lastBackendRequestUrl ? `Last: ${formatBackendPath(state.lastBackendRequestUrl)}` : null,
     state.lastError ? `Error: ${state.lastError}` : null,
   ]
     .filter(Boolean)
@@ -83,6 +98,10 @@ function renderState(state) {
 function sendMessage(message) {
   chrome.runtime.sendMessage(message, (response) => {
     if (chrome.runtime.lastError) {
+      ensurePanel().textContent = [
+        "BG: disconnected",
+        `Error: ${chrome.runtime.lastError.message}`,
+      ].join("\n");
       return;
     }
 
@@ -102,7 +121,8 @@ function heartbeat() {
   sendMessage({ type: "watchdog-heartbeat" });
 }
 
-ensurePanel().textContent = "Network: unknown\nPage: starting";
+ensurePanel().textContent = "BG: connecting\nNetwork: unknown\nPage: starting";
+sendMessage({ type: "watchdog-hello", href: window.location.href });
 sendMessage({ type: "watchdog-get-state" });
 heartbeat();
 setInterval(heartbeat, HEARTBEAT_INTERVAL_MS);

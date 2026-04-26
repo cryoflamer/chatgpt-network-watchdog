@@ -1,12 +1,35 @@
 const GENERATION_PATH = "/backend-api/f/conversation";
 const HEARTBEAT_TIMEOUT_MS = 15000;
 const WATCH_INTERVAL_MS = 3000;
+const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
+const DIAGNOSTIC_LOG = true;
 
 const requests = new Map();
 const tabs = new Map();
 
+console.log("[CTR:BG] service worker loaded", {
+  href: chrome.runtime.getURL("src/background.js"),
+});
+
 function now() {
   return Date.now();
+}
+
+function debugLog(message, payload = {}) {
+  if (!DIAGNOSTIC_LOG) {
+    return;
+  }
+
+  console.log(`[CTR:BG] ${message}`, payload);
+}
+
+function isChatGptBackendRequest(details) {
+  try {
+    const url = new URL(details.url);
+    return url.hostname.endsWith("chatgpt.com") && url.pathname.startsWith("/backend-api/");
+  } catch (_error) {
+    return false;
+  }
 }
 
 function isGenerationRequest(details) {
@@ -24,12 +47,15 @@ function getTabState(tabId) {
       tabId,
       networkState: "idle",
       pageState: "unknown",
+      backgroundState: "connected",
       lastHeartbeatAt: 0,
       currentRequestId: null,
       generationStartedAt: null,
       lastDoneAt: null,
       lastErrorAt: null,
       lastError: null,
+      lastBackendRequestAt: null,
+      lastBackendRequestUrl: null,
     });
   }
 
@@ -50,10 +76,13 @@ function publicState(state) {
     tabId: state.tabId,
     networkState: state.networkState,
     pageState: state.pageState,
+    backgroundState: state.backgroundState,
     generationDurationMs: generationDurationMs(state),
     lastDoneAt: state.lastDoneAt,
     lastErrorAt: state.lastErrorAt,
     lastError: state.lastError,
+    lastBackendRequestAt: state.lastBackendRequestAt,
+    lastBackendRequestUrl: state.lastBackendRequestUrl,
   };
 }
 
@@ -99,6 +128,23 @@ function notifyTab(state) {
 
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
+    if (isChatGptBackendRequest(details)) {
+      debugLog("backend request seen", {
+        requestId: details.requestId,
+        tabId: details.tabId,
+        method: details.method,
+        type: details.type,
+        url: details.url,
+      });
+
+      if (details.tabId >= 0) {
+        const state = getTabState(details.tabId);
+        state.lastBackendRequestAt = now();
+        state.lastBackendRequestUrl = details.url;
+        notifyTab(state);
+      }
+    }
+
     if (!isGenerationRequest(details) || details.tabId < 0) {
       return;
     }
@@ -110,6 +156,8 @@ chrome.webRequest.onBeforeRequest.addListener(
     state.lastDoneAt = null;
     state.lastErrorAt = null;
     state.lastError = null;
+    state.lastBackendRequestAt = state.generationStartedAt;
+    state.lastBackendRequestUrl = details.url;
 
     requests.set(details.requestId, {
       tabId: details.tabId,
@@ -117,7 +165,7 @@ chrome.webRequest.onBeforeRequest.addListener(
       url: details.url,
     });
 
-    console.log("ChatGPT generation started", {
+    console.log("[CTR:BG] ChatGPT generation started", {
       requestId: details.requestId,
       tabId: details.tabId,
       url: details.url,
@@ -125,11 +173,21 @@ chrome.webRequest.onBeforeRequest.addListener(
 
     notifyTab(state);
   },
-  { urls: ["https://chatgpt.com/backend-api/f/conversation"] },
+  REQUEST_FILTER,
 );
 
 chrome.webRequest.onCompleted.addListener(
   (details) => {
+    if (isChatGptBackendRequest(details)) {
+      debugLog("backend request completed", {
+        requestId: details.requestId,
+        tabId: details.tabId,
+        method: details.method,
+        statusCode: details.statusCode,
+        url: details.url,
+      });
+    }
+
     const request = requests.get(details.requestId);
     if (!request) {
       return;
@@ -141,7 +199,7 @@ chrome.webRequest.onCompleted.addListener(
     state.lastDoneAt = now();
     state.lastError = null;
 
-    console.log("ChatGPT generation completed", {
+    console.log("[CTR:BG] ChatGPT generation completed", {
       requestId: details.requestId,
       tabId: request.tabId,
       statusCode: details.statusCode,
@@ -152,11 +210,21 @@ chrome.webRequest.onCompleted.addListener(
     requests.delete(details.requestId);
     notifyTab(state);
   },
-  { urls: ["https://chatgpt.com/backend-api/f/conversation"] },
+  REQUEST_FILTER,
 );
 
 chrome.webRequest.onErrorOccurred.addListener(
   (details) => {
+    if (isChatGptBackendRequest(details)) {
+      debugLog("backend request error", {
+        requestId: details.requestId,
+        tabId: details.tabId,
+        method: details.method,
+        error: details.error,
+        url: details.url,
+      });
+    }
+
     const request = requests.get(details.requestId);
     if (!request) {
       return;
@@ -168,7 +236,7 @@ chrome.webRequest.onErrorOccurred.addListener(
     state.lastErrorAt = now();
     state.lastError = details.error;
 
-    console.warn("ChatGPT generation failed", {
+    console.warn("[CTR:BG] ChatGPT generation failed", {
       requestId: details.requestId,
       tabId: request.tabId,
       error: details.error,
@@ -179,11 +247,12 @@ chrome.webRequest.onErrorOccurred.addListener(
     requests.delete(details.requestId);
     notifyTab(state);
   },
-  { urls: ["https://chatgpt.com/backend-api/f/conversation"] },
+  REQUEST_FILTER,
 );
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!sender.tab?.id) {
+    debugLog("message without tab", { message });
     return false;
   }
 
@@ -192,16 +261,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "watchdog-heartbeat") {
     state.lastHeartbeatAt = now();
     state.pageState = "alive";
+    state.backgroundState = "connected";
+    notifyTab(state);
+    sendResponse({ ok: true, state: publicState(state) });
+    return true;
+  }
+
+  if (message?.type === "watchdog-hello") {
+    state.lastHeartbeatAt = now();
+    state.pageState = "alive";
+    state.backgroundState = "connected";
+    console.log("[CTR:BG] content script connected", {
+      tabId: sender.tab.id,
+      url: sender.tab.url,
+      message,
+    });
     notifyTab(state);
     sendResponse({ ok: true, state: publicState(state) });
     return true;
   }
 
   if (message?.type === "watchdog-get-state") {
+    debugLog("state requested", { tabId: sender.tab.id });
     sendResponse({ ok: true, state: publicState(state) });
     return true;
   }
 
+  debugLog("unknown message", { tabId: sender.tab.id, message });
   return false;
 });
 
@@ -222,7 +308,7 @@ setInterval(() => {
     if (state.lastHeartbeatAt && currentTime - state.lastHeartbeatAt > HEARTBEAT_TIMEOUT_MS) {
       if (state.pageState !== "frozen") {
         state.pageState = "frozen";
-        console.warn("ChatGPT tab heartbeat missed", {
+        console.warn("[CTR:BG] ChatGPT tab heartbeat missed", {
           tabId: state.tabId,
           msSinceHeartbeat: currentTime - state.lastHeartbeatAt,
           networkState: state.networkState,
