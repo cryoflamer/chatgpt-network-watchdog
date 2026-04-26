@@ -64,6 +64,15 @@
         opacity: .55;
       }
 
+      button + button {
+        margin-top: 8px;
+      }
+
+      button.secondary {
+        background: #374151;
+        color: #f9fafb;
+      }
+
       .hint {
         margin-top: 10px;
         color: #9ca3af;
@@ -83,6 +92,7 @@
       <dt>Last</dt><dd id="last">n/a</dd>
     </dl>
     <button id="openFreshChat" type="button">Open current chat in fresh tab</button>
+    <button id="reloadTab" class="secondary" type="button" disabled>Reload tab</button>
     <div id="hint" class="hint">State is tracked by the background service worker. Hotkey: Alt+Shift+N opens the current chat in a fresh tab.</div>
     <script src="src/popup.js"></script>
   </body>

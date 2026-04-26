@@ -31,6 +31,7 @@ This initial version does not auto-close or auto-open tabs. It only observes and
   - last completion/error time.
 - Updates the extension badge with compact states.
 - Shows an **Open current chat in fresh tab** button after generation completion.
+- Shows a **Reload tab** button for network error states, where opening a fresh tab may not help.
 
 ## Install in Opera / Chrome
 
@@ -74,3 +75,7 @@ Planned follow-up patches:
 ## Hotkey
 
 Use `Alt+Shift+N` to open the current ChatGPT conversation URL in a fresh tab. If the active tab is not a ChatGPT conversation, the extension falls back to `https://chatgpt.com/`.
+
+## Error recovery
+
+When the state is `ERR`, the popup enables **Reload tab**. This is intentionally separate from **Open current chat in fresh tab** because transport-level errors such as `net::ERR_QUIC_PROTOCOL_ERROR` can affect new tabs too. Reloading the current tab is the safer first recovery action.

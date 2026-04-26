@@ -7,6 +7,7 @@ const errorEl = document.getElementById("error");
 const lastEl = document.getElementById("last");
 const hintEl = document.getElementById("hint");
 const openFreshChatButton = document.getElementById("openFreshChat");
+const reloadTabButton = document.getElementById("reloadTab");
 
 let currentState = null;
 
@@ -74,9 +75,10 @@ function renderState(state) {
   lastEl.textContent = formatBackendPath(state.lastBackendRequestUrl);
 
   openFreshChatButton.disabled = !(state.networkState === "done" || state.pageState === "frozen");
+  reloadTabButton.disabled = state.networkState !== "error";
 
   if (state.networkState === "error") {
-    hintEl.textContent = "Network error detected. Fresh tabs may not recover this state.";
+    hintEl.textContent = "Network error detected. Reloading the current ChatGPT tab is safer than opening a fresh one.";
   } else if (state.pageState === "frozen") {
     hintEl.textContent = "The page heartbeat is stale. Opening a fresh chat is safe.";
   } else if (state.networkState === "done") {
@@ -119,6 +121,33 @@ openFreshChatButton.addEventListener("click", () => {
     if (!response?.ok) {
       hintEl.textContent = response?.error || "Unable to open fresh chat.";
       openFreshChatButton.disabled = false;
+      return;
+    }
+
+    if (response.state) {
+      renderState(response.state);
+    } else if (currentState) {
+      renderState(currentState);
+    }
+  });
+});
+
+
+reloadTabButton.addEventListener("click", () => {
+  reloadTabButton.disabled = true;
+  reloadTabButton.textContent = "Reloading...";
+
+  chrome.runtime.sendMessage({ type: "watchdog-popup-reload-tab" }, (response) => {
+    reloadTabButton.textContent = "Reload tab";
+
+    if (chrome.runtime.lastError) {
+      hintEl.textContent = chrome.runtime.lastError.message;
+      return;
+    }
+
+    if (!response?.ok) {
+      hintEl.textContent = response?.error || "Unable to reload tab.";
+      reloadTabButton.disabled = currentState?.networkState !== "error";
       return;
     }
 

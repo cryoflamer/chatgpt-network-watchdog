@@ -192,6 +192,27 @@ function openFreshChat(state, callback, sourceUrl = null) {
   });
 }
 
+
+function reloadChatGptTab(state, callback) {
+  chrome.tabs.reload(state.tabId, {}, () => {
+    if (chrome.runtime.lastError) {
+      state.lastActionAt = now();
+      state.lastAction = `reload failed: ${chrome.runtime.lastError.message}`;
+      notifyTab(state);
+      callback?.({ ok: false, error: chrome.runtime.lastError.message, state: publicState(state) });
+      return;
+    }
+
+    state.lastActionAt = now();
+    state.lastAction = "tab reload requested";
+    console.log("[CTR:BG] ChatGPT tab reload requested", {
+      tabId: state.tabId,
+    });
+    notifyTab(state);
+    callback?.({ ok: true, state: publicState(state) });
+  });
+}
+
 function openFreshChatForCurrentWindow(callback) {
   getActiveChatGptTab((tab) => {
     if (!tab?.id) {
@@ -359,6 +380,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       openFreshChat(getTabState(tab.id), sendResponse, tab.url);
+    });
+    return true;
+  }
+
+  if (message?.type === "watchdog-popup-reload-tab") {
+    getActiveChatGptTab((tab) => {
+      if (!tab?.id) {
+        sendResponse({ ok: false, error: "No ChatGPT tab found" });
+        return;
+      }
+
+      reloadChatGptTab(getTabState(tab.id), sendResponse);
     });
     return true;
   }
