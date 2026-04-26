@@ -2,7 +2,7 @@ const GENERATION_PATH = "/backend-api/f/conversation";
 const HEARTBEAT_TIMEOUT_MS = 15000;
 const WATCH_INTERVAL_MS = 3000;
 const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
-const DIAGNOSTIC_LOG = true;
+const DIAGNOSTIC_LOG = false;
 
 const requests = new Map();
 const tabs = new Map();
@@ -56,6 +56,8 @@ function getTabState(tabId) {
       lastError: null,
       lastBackendRequestAt: null,
       lastBackendRequestUrl: null,
+      lastActionAt: null,
+      lastAction: null,
     });
   }
 
@@ -83,6 +85,8 @@ function publicState(state) {
     lastError: state.lastError,
     lastBackendRequestAt: state.lastBackendRequestAt,
     lastBackendRequestUrl: state.lastBackendRequestUrl,
+    lastActionAt: state.lastActionAt,
+    lastAction: state.lastAction,
   };
 }
 
@@ -278,6 +282,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     notifyTab(state);
     sendResponse({ ok: true, state: publicState(state) });
+    return true;
+  }
+
+  if (message?.type === "watchdog-open-fresh-chat") {
+    chrome.tabs.create({ url: "https://chatgpt.com/", active: true }, (tab) => {
+      if (chrome.runtime.lastError) {
+        state.lastActionAt = now();
+        state.lastAction = `open failed: ${chrome.runtime.lastError.message}`;
+        notifyTab(state);
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message, state: publicState(state) });
+        return;
+      }
+
+      state.lastActionAt = now();
+      state.lastAction = `fresh chat opened: ${tab?.id ?? "unknown"}`;
+      console.log("[CTR:BG] fresh ChatGPT tab opened", {
+        sourceTabId: sender.tab.id,
+        newTabId: tab?.id,
+      });
+      notifyTab(state);
+      sendResponse({ ok: true, tabId: tab?.id, state: publicState(state) });
+    });
     return true;
   }
 

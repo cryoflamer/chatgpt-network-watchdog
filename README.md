@@ -30,6 +30,7 @@ This initial version does not auto-close or auto-open tabs. It only observes and
   - generation duration,
   - last completion/error time.
 - Updates the extension badge with compact states.
+- Shows an **Open fresh chat** button after generation completion.
 
 ## Install in Opera / Chrome
 
@@ -65,7 +66,6 @@ Page: frozen
 
 Planned follow-up patches:
 
-1. Add a safe manual action button: **Open fresh ChatGPT tab**.
-2. Add optional automatic tab rotation when `network done + page frozen` is detected.
-3. Add settings for timeouts and auto-action behavior.
-4. Add defensive handling for multiple ChatGPT tabs and regenerated responses.
+1. Add optional automatic tab rotation when `network done + page frozen` is detected.
+2. Add settings for timeouts and auto-action behavior.
+3. Add defensive handling for multiple ChatGPT tabs and regenerated responses.

@@ -1,5 +1,6 @@
 const HEARTBEAT_INTERVAL_MS = 2000;
 const PANEL_ID = "chatgpt-network-watchdog-panel";
+const OPEN_BUTTON_ID = "chatgpt-network-watchdog-open-button";
 
 let lastState = null;
 
@@ -20,7 +21,7 @@ function ensurePanel() {
     panel.style.font = "13px system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
     panel.style.boxShadow = "0 4px 20px rgba(0, 0, 0, .25)";
     panel.style.whiteSpace = "pre-line";
-    panel.style.pointerEvents = "none";
+    panel.style.pointerEvents = "auto";
     document.body.appendChild(panel);
   }
 
@@ -76,12 +77,59 @@ function panelColor(state) {
   return "#333333";
 }
 
+
+function shouldShowOpenButton(state) {
+  return state.networkState === "done";
+}
+
+function openFreshChat() {
+  const button = document.getElementById(OPEN_BUTTON_ID);
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Opening...";
+  }
+
+  sendMessage({ type: "watchdog-open-fresh-chat" });
+}
+
+function renderOpenButton(panel, state) {
+  let button = document.getElementById(OPEN_BUTTON_ID);
+
+  if (!shouldShowOpenButton(state)) {
+    if (button) {
+      button.remove();
+    }
+    return;
+  }
+
+  if (!button) {
+    button = document.createElement("button");
+    button.id = OPEN_BUTTON_ID;
+    button.type = "button";
+    button.style.marginTop = "8px";
+    button.style.padding = "6px 10px";
+    button.style.border = "0";
+    button.style.borderRadius = "7px";
+    button.style.background = "#ffffff";
+    button.style.color = "#14532d";
+    button.style.cursor = "pointer";
+    button.style.font = "12px system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+    button.style.fontWeight = "600";
+    button.addEventListener("click", openFreshChat);
+  }
+
+  button.disabled = false;
+  button.textContent = "Open fresh chat";
+  panel.appendChild(button);
+}
+
 function renderState(state) {
   lastState = state;
 
   const panel = ensurePanel();
   panel.style.background = panelColor(state);
-  panel.textContent = [
+
+  const lines = [
     `BG: ${state.backgroundState || "unknown"}`,
     `Network: ${state.networkState}`,
     `Page: ${state.pageState}`,
@@ -89,10 +137,21 @@ function renderState(state) {
     `Done: ${formatAge(state.lastDoneAt)}`,
     state.lastBackendRequestAt ? `Backend: ${formatAge(state.lastBackendRequestAt)}` : null,
     state.lastBackendRequestUrl ? `Last: ${formatBackendPath(state.lastBackendRequestUrl)}` : null,
+    state.lastAction ? `Action: ${state.lastAction}` : null,
     state.lastError ? `Error: ${state.lastError}` : null,
   ]
     .filter(Boolean)
     .join("\n");
+
+  let body = panel.querySelector("[data-watchdog-body]");
+  if (!body) {
+    body = document.createElement("div");
+    body.dataset.watchdogBody = "true";
+    panel.appendChild(body);
+  }
+  body.textContent = lines;
+
+  renderOpenButton(panel, state);
 }
 
 function sendMessage(message) {
