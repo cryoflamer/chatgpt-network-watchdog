@@ -3,7 +3,7 @@ const HEARTBEAT_TIMEOUT_MS = 15000;
 const WATCH_INTERVAL_MS = 3000;
 const DONE_RESET_MS = 120000;
 const AUTO_RECOVER_DEBOUNCE_MS = 60000;
-const RELOAD_MIN_DISPLAY_MS = 1500;
+const RELOAD_MIN_DISPLAY_MS = 3000;
 const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
 const DIAGNOSTIC_LOG = false;
 
