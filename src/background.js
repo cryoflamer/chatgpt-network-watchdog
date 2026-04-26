@@ -8,6 +8,7 @@ const DIAGNOSTIC_LOG = false;
 
 const requests = new Map();
 const tabs = new Map();
+const conversations = new Map();
 const settings = {
   autoRecoverFrozenTabs: false,
 };
@@ -51,6 +52,137 @@ function isGenerationRequest(details) {
   }
 }
 
+function conversationIdFromUrl(url) {
+  if (!url) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== "chatgpt.com") {
+      return null;
+    }
+
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const markerIndex = parts.indexOf("c");
+    if (markerIndex >= 0 && parts[markerIndex + 1]) {
+      return parts[markerIndex + 1];
+    }
+  } catch (_error) {
+    return null;
+  }
+
+  return null;
+}
+
+function conversationPatchFromState(state) {
+  return {
+    networkState: state.networkState,
+    generationStartedAt: state.generationStartedAt,
+    lastDoneAt: state.lastDoneAt,
+    lastErrorAt: state.lastErrorAt,
+    lastError: state.lastError,
+    lastBackendRequestAt: state.lastBackendRequestAt,
+    lastBackendRequestUrl: state.lastBackendRequestUrl,
+  };
+}
+
+function updateConversationState(conversationId, patch) {
+  if (!conversationId) {
+    return;
+  }
+
+  const currentTime = now();
+  const previous = conversations.get(conversationId) || {};
+  conversations.set(conversationId, {
+    ...previous,
+    ...patch,
+    conversationId,
+    updatedAt: currentTime,
+  });
+}
+
+function syncStateFromConversation(state, tabUrl) {
+  const conversationId = conversationIdFromUrl(tabUrl) || state.conversationId;
+  if (!conversationId) {
+    return false;
+  }
+
+  state.conversationId = conversationId;
+  const conversation = conversations.get(conversationId);
+  if (!conversation || !conversation.updatedAt) {
+    return false;
+  }
+
+  if (state.mirroredConversationUpdatedAt && state.mirroredConversationUpdatedAt >= conversation.updatedAt) {
+    return false;
+  }
+
+  const shouldMirror =
+    conversation.networkState === "generating" ||
+    state.mirroredConversationState ||
+    state.networkState === "idle" ||
+    !state.generationStartedAt;
+
+  if (!shouldMirror) {
+    return false;
+  }
+
+  state.networkState = conversation.networkState || state.networkState;
+  state.generationStartedAt = conversation.generationStartedAt || state.generationStartedAt;
+  state.lastDoneAt = conversation.lastDoneAt || null;
+  state.lastErrorAt = conversation.lastErrorAt || null;
+  state.lastError = conversation.lastError || null;
+  state.lastBackendRequestAt = conversation.lastBackendRequestAt || state.lastBackendRequestAt;
+  state.lastBackendRequestUrl = conversation.lastBackendRequestUrl || state.lastBackendRequestUrl;
+  state.currentRequestId = conversation.networkState === "generating" ? state.currentRequestId : null;
+  state.mirroredConversationState = true;
+  state.mirroredConversationUpdatedAt = conversation.updatedAt;
+
+  return true;
+}
+
+function updateConversationFromTab(tabId, patch) {
+  chrome.tabs.get(tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab?.url) {
+      return;
+    }
+
+    const conversationId = conversationIdFromUrl(tab.url);
+    if (!conversationId) {
+      return;
+    }
+
+    const state = getTabState(tabId);
+    state.conversationId = conversationId;
+    updateConversationState(conversationId, {
+      ...patch,
+      sourceTabId: tabId,
+      sourceUrl: tab.url,
+    });
+    syncKnownTabsForConversation(conversationId);
+  });
+}
+
+function syncKnownTabsForConversation(conversationId) {
+  chrome.tabs.query({ url: "https://chatgpt.com/*" }, (chatTabs) => {
+    if (chrome.runtime.lastError) {
+      return;
+    }
+
+    for (const tab of chatTabs || []) {
+      if (typeof tab.id !== "number" || conversationIdFromUrl(tab.url) !== conversationId) {
+        continue;
+      }
+
+      const state = getTabState(tab.id);
+      if (syncStateFromConversation(state, tab.url)) {
+        notifyTab(state);
+      }
+    }
+  });
+}
+
 function getTabState(tabId) {
   if (!tabs.has(tabId)) {
     tabs.set(tabId, {
@@ -69,6 +201,9 @@ function getTabState(tabId) {
       lastActionAt: null,
       lastAction: null,
       lastAutoRecoverAt: null,
+      conversationId: null,
+      mirroredConversationState: false,
+      mirroredConversationUpdatedAt: null,
     });
   }
 
@@ -100,12 +235,15 @@ function publicState(state) {
     lastActionAt: state.lastActionAt,
     lastAction: state.lastAction,
     lastAutoRecoverAt: state.lastAutoRecoverAt,
+    conversationId: state.conversationId,
+    mirroredConversationState: state.mirroredConversationState,
     settings: { ...settings },
   };
 }
 
 function tabSummary(tab) {
   const state = getTabState(tab.id);
+  syncStateFromConversation(state, tab.url);
 
   return {
     id: tab.id,
@@ -369,6 +507,8 @@ chrome.webRequest.onBeforeRequest.addListener(
       url: details.url,
     });
 
+    updateConversationFromTab(details.tabId, conversationPatchFromState(state));
+
     console.log("[CTR:BG] ChatGPT generation started", {
       requestId: details.requestId,
       tabId: details.tabId,
@@ -402,6 +542,8 @@ chrome.webRequest.onCompleted.addListener(
     state.currentRequestId = null;
     state.lastDoneAt = now();
     state.lastError = null;
+
+    updateConversationFromTab(request.tabId, conversationPatchFromState(state));
 
     console.log("[CTR:BG] ChatGPT generation completed", {
       requestId: details.requestId,
@@ -440,6 +582,8 @@ chrome.webRequest.onErrorOccurred.addListener(
     state.currentRequestId = null;
     state.lastErrorAt = now();
     state.lastError = details.error;
+
+    updateConversationFromTab(request.tabId, conversationPatchFromState(state));
 
     console.warn("[CTR:BG] ChatGPT generation failed", {
       requestId: details.requestId,
@@ -567,6 +711,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.lastHeartbeatAt = now();
     state.pageState = "alive";
     state.backgroundState = "connected";
+    syncStateFromConversation(state, sender.tab?.url);
     notifyTab(state);
     sendResponse({ ok: true, state: publicState(state) });
     return true;
@@ -576,6 +721,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.lastHeartbeatAt = now();
     state.pageState = "alive";
     state.backgroundState = "connected";
+    syncStateFromConversation(state, sender.tab?.url);
     console.log("[CTR:BG] content script connected", {
       tabId: senderTabId,
       url: sender.tab.url,
