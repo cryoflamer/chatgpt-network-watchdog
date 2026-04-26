@@ -30,7 +30,7 @@ This initial version does not auto-close or auto-open tabs. It only observes and
   - generation duration,
   - last completion/error time.
 - Updates the extension badge with compact states.
-- Shows an **Open fresh chat** button after generation completion.
+- Shows an **Open current chat in fresh tab** button after generation completion.
 
 ## Install in Opera / Chrome
 
@@ -73,4 +73,4 @@ Planned follow-up patches:
 
 ## Hotkey
 
-Use `Alt+Shift+N` to open a fresh ChatGPT tab from the current browser window.
+Use `Alt+Shift+N` to open the current ChatGPT conversation URL in a fresh tab. If the active tab is not a ChatGPT conversation, the extension falls back to `https://chatgpt.com/`.

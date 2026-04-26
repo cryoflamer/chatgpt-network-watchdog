@@ -80,11 +80,11 @@ function renderState(state) {
   } else if (state.pageState === "frozen") {
     hintEl.textContent = "The page heartbeat is stale. Opening a fresh chat is safe.";
   } else if (state.networkState === "done") {
-    hintEl.textContent = "The response has finished at the network level. Alt+Shift+N opens a fresh chat.";
+    hintEl.textContent = "The response has finished at the network level. Alt+Shift+N opens the current chat in a fresh tab.";
   } else if (state.networkState === "generating") {
     hintEl.textContent = "A ChatGPT generation request is in progress.";
   } else {
-    hintEl.textContent = "Waiting for the next ChatGPT generation request. Hotkey: Alt+Shift+N.";
+    hintEl.textContent = "Waiting for the next ChatGPT generation request. Hotkey: Alt+Shift+N opens the current chat in a fresh tab.";
   }
 }
 

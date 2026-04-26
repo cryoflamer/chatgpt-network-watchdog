@@ -151,8 +151,27 @@ function markBackendRequest(details) {
   notifyTab(state);
 }
 
-function openFreshChat(state, callback) {
-  chrome.tabs.create({ url: "https://chatgpt.com/", active: true }, (tab) => {
+function normalizeChatGptUrl(url) {
+  if (!url) {
+    return "https://chatgpt.com/";
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "https:" && parsed.hostname === "chatgpt.com") {
+      return parsed.toString();
+    }
+  } catch (_error) {
+    // Fall through to the safe default.
+  }
+
+  return "https://chatgpt.com/";
+}
+
+function openFreshChat(state, callback, sourceUrl = null) {
+  const targetUrl = normalizeChatGptUrl(sourceUrl);
+
+  chrome.tabs.create({ url: targetUrl, active: true }, (tab) => {
     if (chrome.runtime.lastError) {
       state.lastActionAt = now();
       state.lastAction = `open failed: ${chrome.runtime.lastError.message}`;
@@ -166,6 +185,7 @@ function openFreshChat(state, callback) {
     console.log("[CTR:BG] fresh ChatGPT tab opened", {
       sourceTabId: state.tabId,
       newTabId: tab?.id,
+      targetUrl,
     });
     notifyTab(state);
     callback?.({ ok: true, tabId: tab?.id, state: publicState(state) });
@@ -179,7 +199,7 @@ function openFreshChatForCurrentWindow(callback) {
       return;
     }
 
-    openFreshChat(getTabState(tab.id), callback);
+    openFreshChat(getTabState(tab.id), callback, tab.url);
   });
 }
 
@@ -338,7 +358,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
 
-      openFreshChat(getTabState(tab.id), sendResponse);
+      openFreshChat(getTabState(tab.id), sendResponse, tab.url);
     });
     return true;
   }
@@ -374,7 +394,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "watchdog-open-fresh-chat") {
-    openFreshChat(state, sendResponse);
+    openFreshChat(state, sendResponse, sender.tab?.url);
     return true;
   }
 
