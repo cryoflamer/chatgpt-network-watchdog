@@ -26,6 +26,7 @@ The extension observes ChatGPT runtime state from the background worker and expo
 - Sends a lightweight heartbeat from the ChatGPT tab to detect page responsiveness.
 - Updates the extension badge with compact states: `GEN`, `DONE`, `FRZ`, and `ERR`.
 - Shows popup diagnostics for network state, page heartbeat, generation duration, last request, and errors.
+- Shows a multi-tab state view for all open ChatGPT tabs, with per-tab **Open fresh** and **Reload** actions.
 - Shows an **Open current chat in fresh tab** button after generation completion or freeze detection.
 - Shows a **Reload tab** button for network error states, where opening a fresh tab may not help.
 - Provides an optional **Auto-recover frozen tabs** mode that opens the current chat URL in a fresh tab only when the backend response is done and the page heartbeat is stale.
@@ -65,8 +66,20 @@ Page: frozen
 Planned follow-up patches:
 
 1. Add settings for heartbeat and auto-recovery timeouts.
-2. Add defensive handling for multiple ChatGPT tabs and regenerated responses.
+2. Add defensive handling for regenerated responses and stuck-generation states.
 3. Add optional sound alerts for DONE, FRZ, and ERR state changes.
+
+## Multi-tab view
+
+The popup lists all detected ChatGPT tabs and shows a compact state for each one:
+
+```text
+DONE · 36.0s · active · /c/...
+GEN · 12.4s · background · /c/...
+ERR · 4.8s · background · /c/...
+```
+
+Each tab row has its own **Open fresh** action. The **Reload** action is enabled for tabs in `ERR` state.
 
 ## Hotkey
 

@@ -6,11 +6,13 @@ const doneEl = document.getElementById("done");
 const errorEl = document.getElementById("error");
 const lastEl = document.getElementById("last");
 const hintEl = document.getElementById("hint");
+const tabsListEl = document.getElementById("tabsList");
 const openFreshChatButton = document.getElementById("openFreshChat");
 const reloadTabButton = document.getElementById("reloadTab");
 const autoRecoverFrozenTabsInput = document.getElementById("autoRecoverFrozenTabs");
 
 let currentState = null;
+let currentTabs = [];
 
 function formatAge(timestamp) {
   if (!timestamp) {
@@ -41,6 +43,19 @@ function formatBackendPath(url) {
   }
 }
 
+function formatChatPath(url) {
+  if (!url) {
+    return "n/a";
+  }
+
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname === "/" ? "/" : parsed.pathname;
+  } catch (_error) {
+    return url;
+  }
+}
+
 function displayStatus(state) {
   if (state.pageState === "frozen") {
     return "FRZ";
@@ -61,12 +76,124 @@ function displayStatus(state) {
   return "IDLE";
 }
 
-function renderState(state) {
+function statusClass(status) {
+  if (status === "FRZ") {
+    return "frozen";
+  }
+
+  if (status === "GEN") {
+    return "generating";
+  }
+
+  if (status === "ERR") {
+    return "error";
+  }
+
+  return status.toLowerCase();
+}
+
+function tabLine(tab) {
+  const status = displayStatus(tab.state);
+  const duration = formatDuration(tab.state.generationDurationMs);
+  const path = formatChatPath(tab.url);
+  const active = tab.active ? "active" : "background";
+
+  return `${status} · ${duration} · ${active} · ${path}`;
+}
+
+function sendPopupMessage(message, callback) {
+  chrome.runtime.sendMessage(message, (response) => {
+    if (chrome.runtime.lastError) {
+      hintEl.textContent = chrome.runtime.lastError.message;
+      callback?.({ ok: false, error: chrome.runtime.lastError.message });
+      return;
+    }
+
+    callback?.(response);
+  });
+}
+
+function renderTabs(tabs) {
+  currentTabs = tabs || [];
+  tabsListEl.replaceChildren();
+
+  if (!currentTabs.length) {
+    tabsListEl.textContent = "No ChatGPT tabs detected.";
+    return;
+  }
+
+  for (const tab of currentTabs) {
+    const card = document.createElement("div");
+    card.className = `tab-card${tab.active ? " active" : ""}`;
+
+    const title = document.createElement("div");
+    title.className = "tab-title";
+    title.textContent = tab.title || "ChatGPT";
+    card.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "tab-meta";
+    meta.textContent = tabLine(tab);
+    card.appendChild(meta);
+
+    const actions = document.createElement("div");
+    actions.className = "tab-actions";
+
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.textContent = "Open fresh";
+    openButton.addEventListener("click", () => {
+      openButton.disabled = true;
+      sendPopupMessage(
+        { type: "watchdog-popup-open-tab-fresh-chat", tabId: tab.id },
+        (response) => {
+          if (!response?.ok) {
+            hintEl.textContent = response?.error || "Unable to open fresh chat.";
+            openButton.disabled = false;
+            return;
+          }
+
+          hintEl.textContent = "Fresh chat tab opened.";
+          requestState();
+        },
+      );
+    });
+    actions.appendChild(openButton);
+
+    const reloadButton = document.createElement("button");
+    reloadButton.type = "button";
+    reloadButton.className = "secondary";
+    reloadButton.textContent = "Reload";
+    reloadButton.disabled = tab.state.networkState !== "error";
+    reloadButton.addEventListener("click", () => {
+      reloadButton.disabled = true;
+      sendPopupMessage(
+        { type: "watchdog-popup-reload-tab-by-id", tabId: tab.id },
+        (response) => {
+          if (!response?.ok) {
+            hintEl.textContent = response?.error || "Unable to reload tab.";
+            reloadButton.disabled = tab.state.networkState !== "error";
+            return;
+          }
+
+          hintEl.textContent = "Tab reload requested.";
+          requestState();
+        },
+      );
+    });
+    actions.appendChild(reloadButton);
+
+    card.appendChild(actions);
+    tabsListEl.appendChild(card);
+  }
+}
+
+function renderState(state, tabs = currentTabs) {
   currentState = state;
 
   const status = displayStatus(state);
   statusEl.textContent = status;
-  statusEl.className = `status status-${status.toLowerCase() === "frz" ? "frozen" : status.toLowerCase() === "gen" ? "generating" : status.toLowerCase() === "err" ? "error" : status.toLowerCase()}`;
+  statusEl.className = `status status-${statusClass(status)}`;
 
   networkEl.textContent = state.networkState || "unknown";
   pageEl.textContent = state.pageState || "unknown";
@@ -78,6 +205,7 @@ function renderState(state) {
   openFreshChatButton.disabled = !(state.networkState === "done" || state.pageState === "frozen");
   reloadTabButton.disabled = state.networkState !== "error";
   autoRecoverFrozenTabsInput.checked = Boolean(state.settings?.autoRecoverFrozenTabs);
+  renderTabs(tabs);
 
   if (state.networkState === "error") {
     hintEl.textContent = "Network error detected. Reloading the current ChatGPT tab is safer than opening a fresh one.";
@@ -95,18 +223,13 @@ function renderState(state) {
 }
 
 function requestState() {
-  chrome.runtime.sendMessage({ type: "watchdog-popup-state" }, (response) => {
-    if (chrome.runtime.lastError) {
-      hintEl.textContent = chrome.runtime.lastError.message;
-      return;
-    }
-
+  sendPopupMessage({ type: "watchdog-popup-state" }, (response) => {
     if (!response?.ok) {
       hintEl.textContent = response?.error || "Unable to read watchdog state.";
       return;
     }
 
-    renderState(response.state);
+    renderState(response.state, response.tabs || []);
   });
 }
 
@@ -114,13 +237,8 @@ openFreshChatButton.addEventListener("click", () => {
   openFreshChatButton.disabled = true;
   openFreshChatButton.textContent = "Opening...";
 
-  chrome.runtime.sendMessage({ type: "watchdog-popup-open-fresh-chat" }, (response) => {
-    openFreshChatButton.textContent = "Open fresh chat";
-
-    if (chrome.runtime.lastError) {
-      hintEl.textContent = chrome.runtime.lastError.message;
-      return;
-    }
+  sendPopupMessage({ type: "watchdog-popup-open-fresh-chat" }, (response) => {
+    openFreshChatButton.textContent = "Open current chat in fresh tab";
 
     if (!response?.ok) {
       hintEl.textContent = response?.error || "Unable to open fresh chat.";
@@ -133,21 +251,16 @@ openFreshChatButton.addEventListener("click", () => {
     } else if (currentState) {
       renderState(currentState);
     }
+    requestState();
   });
 });
-
 
 reloadTabButton.addEventListener("click", () => {
   reloadTabButton.disabled = true;
   reloadTabButton.textContent = "Reloading...";
 
-  chrome.runtime.sendMessage({ type: "watchdog-popup-reload-tab" }, (response) => {
+  sendPopupMessage({ type: "watchdog-popup-reload-tab" }, (response) => {
     reloadTabButton.textContent = "Reload tab";
-
-    if (chrome.runtime.lastError) {
-      hintEl.textContent = chrome.runtime.lastError.message;
-      return;
-    }
 
     if (!response?.ok) {
       hintEl.textContent = response?.error || "Unable to reload tab.";
@@ -160,26 +273,20 @@ reloadTabButton.addEventListener("click", () => {
     } else if (currentState) {
       renderState(currentState);
     }
+    requestState();
   });
 });
-
 
 autoRecoverFrozenTabsInput.addEventListener("change", () => {
   autoRecoverFrozenTabsInput.disabled = true;
 
-  chrome.runtime.sendMessage(
+  sendPopupMessage(
     {
       type: "watchdog-popup-set-auto-recover",
       enabled: autoRecoverFrozenTabsInput.checked,
     },
     (response) => {
       autoRecoverFrozenTabsInput.disabled = false;
-
-      if (chrome.runtime.lastError) {
-        hintEl.textContent = chrome.runtime.lastError.message;
-        autoRecoverFrozenTabsInput.checked = Boolean(currentState?.settings?.autoRecoverFrozenTabs);
-        return;
-      }
 
       if (!response?.ok) {
         hintEl.textContent = response?.error || "Unable to update auto-recovery setting.";
@@ -193,8 +300,10 @@ autoRecoverFrozenTabsInput.addEventListener("change", () => {
         currentState.settings = response.settings || currentState.settings;
         renderState(currentState);
       }
+      requestState();
     },
   );
 });
+
 requestState();
 setInterval(requestState, 1000);

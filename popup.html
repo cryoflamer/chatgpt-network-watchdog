@@ -91,6 +91,60 @@
         color: #9ca3af;
         font-size: 12px;
       }
+
+      .tabs {
+        border-top: 1px solid #374151;
+        margin-top: 12px;
+        padding-top: 10px;
+      }
+
+      .tabs h2 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        color: #d1d5db;
+      }
+
+      .tab-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .tab-card {
+        border: 1px solid #374151;
+        border-radius: 10px;
+        padding: 8px;
+        background: #1f2937;
+      }
+
+      .tab-card.active {
+        border-color: #6b7280;
+      }
+
+      .tab-title {
+        font-weight: 700;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .tab-meta {
+        margin-top: 4px;
+        color: #9ca3af;
+        font-size: 11px;
+      }
+
+      .tab-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .tab-actions button {
+        padding: 6px 8px;
+        font-size: 12px;
+      }
     </style>
   </head>
   <body>
@@ -111,6 +165,10 @@
       Auto-recover frozen tabs
     </label>
     <div id="hint" class="hint">State is tracked by the background service worker. Hotkey: Alt+Shift+N opens the current chat in a fresh tab.</div>
+    <section class="tabs">
+      <h2>ChatGPT tabs</h2>
+      <div id="tabsList" class="tab-list">No ChatGPT tabs detected.</div>
+    </section>
     <script src="src/popup.js"></script>
   </body>
 </html>

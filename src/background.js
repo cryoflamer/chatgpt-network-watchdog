@@ -104,6 +104,35 @@ function publicState(state) {
   };
 }
 
+function tabSummary(tab) {
+  const state = getTabState(tab.id);
+
+  return {
+    id: tab.id,
+    title: tab.title || "ChatGPT",
+    url: tab.url || "",
+    active: Boolean(tab.active),
+    windowId: tab.windowId,
+    state: publicState(state),
+  };
+}
+
+function getChatGptTabs(callback) {
+  chrome.tabs.query({ url: "https://chatgpt.com/*" }, (chatTabs) => {
+    if (chrome.runtime.lastError) {
+      callback({ ok: false, error: chrome.runtime.lastError.message, tabs: [] });
+      return;
+    }
+
+    callback({
+      ok: true,
+      tabs: (chatTabs || [])
+        .filter((tab) => typeof tab.id === "number")
+        .map(tabSummary),
+    });
+  });
+}
+
 function badgeForState(state) {
   if (state.pageState === "frozen") {
     return { text: "FRZ", color: "#5c2d91" };
@@ -233,6 +262,28 @@ function openFreshChatForCurrentWindow(callback) {
     }
 
     openFreshChat(getTabState(tab.id), callback, tab.url);
+  });
+}
+
+function openFreshChatForTab(tabId, callback) {
+  chrome.tabs.get(tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab?.id) {
+      callback?.({ ok: false, error: chrome.runtime.lastError?.message || "Tab not found" });
+      return;
+    }
+
+    openFreshChat(getTabState(tab.id), callback, tab.url);
+  });
+}
+
+function reloadChatGptTabById(tabId, callback) {
+  chrome.tabs.get(tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab?.id) {
+      callback?.({ ok: false, error: chrome.runtime.lastError?.message || "Tab not found" });
+      return;
+    }
+
+    reloadChatGptTab(getTabState(tab.id), callback);
   });
 }
 
@@ -415,7 +466,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       const state = getTabState(tab.id);
-      sendResponse({ ok: true, state: publicState(state), tab: { id: tab.id, url: tab.url } });
+      getChatGptTabs((tabsResponse) => {
+        sendResponse({
+          ok: true,
+          state: publicState(state),
+          tab: { id: tab.id, url: tab.url },
+          tabs: tabsResponse.tabs || [],
+        });
+      });
     });
     return true;
   }
@@ -441,6 +499,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       reloadChatGptTab(getTabState(tab.id), sendResponse);
     });
+    return true;
+  }
+
+  if (message?.type === "watchdog-popup-open-tab-fresh-chat") {
+    if (typeof message.tabId !== "number") {
+      sendResponse({ ok: false, error: "Missing tabId" });
+      return false;
+    }
+
+    openFreshChatForTab(message.tabId, sendResponse);
+    return true;
+  }
+
+  if (message?.type === "watchdog-popup-reload-tab-by-id") {
+    if (typeof message.tabId !== "number") {
+      sendResponse({ ok: false, error: "Missing tabId" });
+      return false;
+    }
+
+    reloadChatGptTabById(message.tabId, sendResponse);
+    return true;
+  }
+
+  if (message?.type === "watchdog-popup-tabs-state") {
+    getChatGptTabs(sendResponse);
     return true;
   }
 
