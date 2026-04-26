@@ -3,6 +3,7 @@ const HEARTBEAT_TIMEOUT_MS = 15000;
 const WATCH_INTERVAL_MS = 3000;
 const DONE_RESET_MS = 120000;
 const AUTO_RECOVER_DEBOUNCE_MS = 60000;
+const RELOAD_MIN_DISPLAY_MS = 1500;
 const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
 const DIAGNOSTIC_LOG = false;
 
@@ -390,19 +391,45 @@ function markTabReloading(state, source = "tab reloading") {
   notifyTab(state);
 }
 
-function completeTabReload(state) {
+function finishTabReload(state) {
   if (state.networkState === "reloading") {
     state.networkState = "idle";
   }
 
   if (state.pageState === "reloading") {
-    state.pageState = "unknown";
+    state.pageState = state.lastHeartbeatAt ? "alive" : "unknown";
   }
 
+  state.reloadCompletePending = false;
   state.lastReloadCompletedAt = now();
   state.lastActionAt = state.lastReloadCompletedAt;
   state.lastAction = "tab reload completed";
   notifyTab(state);
+}
+
+function completeTabReload(state) {
+  if (state.networkState !== "reloading" && state.pageState !== "reloading") {
+    return;
+  }
+
+  const currentTime = now();
+  const startedAt = state.lastReloadStartedAt || currentTime;
+  const remainingMs = RELOAD_MIN_DISPLAY_MS - (currentTime - startedAt);
+
+  if (remainingMs > 0) {
+    if (!state.reloadCompletePending) {
+      state.reloadCompletePending = true;
+      setTimeout(() => {
+        if (state.networkState === "reloading" || state.pageState === "reloading") {
+          finishTabReload(state);
+        }
+      }, remainingMs);
+    }
+    notifyTab(state);
+    return;
+  }
+
+  finishTabReload(state);
 }
 
 function reloadChatGptTab(state, callback) {
@@ -742,11 +769,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "watchdog-heartbeat") {
     state.lastHeartbeatAt = now();
-    state.pageState = "alive";
-    state.backgroundState = "connected";
-    if (state.networkState === "reloading") {
-      state.networkState = "idle";
+    if (state.pageState !== "reloading") {
+      state.pageState = "alive";
     }
+    state.backgroundState = "connected";
     notifyTab(state);
     sendResponse({ ok: true, state: publicState(state) });
     return true;
@@ -754,11 +780,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "watchdog-hello") {
     state.lastHeartbeatAt = now();
-    state.pageState = "alive";
-    state.backgroundState = "connected";
-    if (state.networkState === "reloading") {
-      state.networkState = "idle";
+    if (state.pageState !== "reloading") {
+      state.pageState = "alive";
     }
+    state.backgroundState = "connected";
     console.log("[CTR:BG] content script connected", {
       tabId: senderTabId,
       url: sender.tab.url,
@@ -843,7 +868,11 @@ setInterval(() => {
   for (const state of tabs.values()) {
     let changed = false;
 
-    if (state.lastHeartbeatAt && currentTime - state.lastHeartbeatAt > HEARTBEAT_TIMEOUT_MS) {
+    if (
+      state.pageState !== "reloading" &&
+      state.lastHeartbeatAt &&
+      currentTime - state.lastHeartbeatAt > HEARTBEAT_TIMEOUT_MS
+    ) {
       if (state.pageState !== "frozen") {
         state.pageState = "frozen";
         console.warn("[CTR:BG] ChatGPT tab heartbeat missed", {
