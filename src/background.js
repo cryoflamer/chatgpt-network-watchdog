@@ -389,10 +389,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 
+function isOpenFreshChatCommand(command) {
+  return command === "open-fresh-chat" || command === "open_fresh_chat";
+}
+
 chrome.commands.onCommand.addListener((command) => {
-  if (command !== "open-fresh-chat") {
+  console.log("[CTR:BG] command received", { command });
+
+  if (!isOpenFreshChatCommand(command)) {
     return;
   }
+
+  console.log("[CTR:BG] opening fresh ChatGPT tab from hotkey", { command });
 
   openFreshChatForCurrentWindow((response) => {
     if (!response?.ok) {
