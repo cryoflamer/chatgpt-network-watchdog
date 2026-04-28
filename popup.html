@@ -146,6 +146,54 @@
         padding: 6px 8px;
         font-size: 12px;
       }
+
+      .events {
+        border-top: 1px solid #374151;
+        margin-top: 12px;
+        padding-top: 10px;
+      }
+
+      .events h2 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        color: #d1d5db;
+      }
+
+      .event-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .event-item {
+        border: 1px solid #374151;
+        border-radius: 8px;
+        padding: 6px 8px;
+        background: #1f2937;
+      }
+
+      .event-main {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 12px;
+      }
+
+      .event-type {
+        font-weight: 700;
+      }
+
+      .event-age {
+        color: #9ca3af;
+        white-space: nowrap;
+      }
+
+      .event-detail {
+        margin-top: 3px;
+        color: #9ca3af;
+        font-size: 11px;
+        overflow-wrap: anywhere;
+      }
     </style>
   </head>
   <body>
@@ -169,6 +217,10 @@
     <section class="tabs">
       <h2>ChatGPT tabs</h2>
       <div id="tabsList" class="tab-list">No ChatGPT tabs detected.</div>
+    </section>
+    <section class="events">
+      <h2>Recent events</h2>
+      <div id="eventList" class="event-list">No events yet.</div>
     </section>
     <script src="src/popup.js"></script>
   </body>

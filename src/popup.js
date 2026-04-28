@@ -7,12 +7,14 @@ const errorEl = document.getElementById("error");
 const lastEl = document.getElementById("last");
 const hintEl = document.getElementById("hint");
 const tabsListEl = document.getElementById("tabsList");
+const eventListEl = document.getElementById("eventList");
 const openFreshChatButton = document.getElementById("openFreshChat");
 const reloadTabButton = document.getElementById("reloadTab");
 const autoRecoverFrozenTabsInput = document.getElementById("autoRecoverFrozenTabs");
 
 let currentState = null;
 let currentTabs = [];
+let currentEvents = [];
 
 function formatAge(timestamp) {
   if (!timestamp) {
@@ -109,6 +111,36 @@ function tabLine(tab) {
   return `${status} · ${duration} · ${active} · ${path}`;
 }
 
+function formatEventDetail(event) {
+  const parts = [];
+
+  if (typeof event.tabId === "number") {
+    parts.push(`tab ${event.tabId}`);
+  }
+
+  if (event.details?.durationMs !== undefined) {
+    parts.push(formatDuration(event.details.durationMs));
+  }
+
+  if (event.details?.error) {
+    parts.push(event.details.error);
+  }
+
+  if (event.details?.statusCode) {
+    parts.push(`HTTP ${event.details.statusCode}`);
+  }
+
+  if (event.details?.url) {
+    parts.push(formatBackendPath(event.details.url));
+  }
+
+  if (event.details?.targetUrl) {
+    parts.push(formatChatPath(event.details.targetUrl));
+  }
+
+  return parts.join(" · ");
+}
+
 function sendPopupMessage(message, callback) {
   chrome.runtime.sendMessage(message, (response) => {
     if (chrome.runtime.lastError) {
@@ -119,6 +151,44 @@ function sendPopupMessage(message, callback) {
 
     callback?.(response);
   });
+}
+
+function renderEvents(events) {
+  currentEvents = events || [];
+  eventListEl.replaceChildren();
+
+  if (!currentEvents.length) {
+    eventListEl.textContent = "No events yet.";
+    return;
+  }
+
+  for (const event of currentEvents) {
+    const item = document.createElement("div");
+    item.className = "event-item";
+
+    const main = document.createElement("div");
+    main.className = "event-main";
+
+    const type = document.createElement("span");
+    type.className = "event-type";
+    type.textContent = event.type || "EVT";
+    main.appendChild(type);
+
+    const age = document.createElement("span");
+    age.className = "event-age";
+    age.textContent = formatAge(event.at);
+    main.appendChild(age);
+
+    item.appendChild(main);
+
+    const detail = document.createElement("div");
+    detail.className = "event-detail";
+    const suffix = formatEventDetail(event);
+    detail.textContent = suffix ? `${event.message} · ${suffix}` : event.message;
+    item.appendChild(detail);
+
+    eventListEl.appendChild(item);
+  }
 }
 
 function renderTabs(tabs) {
@@ -196,7 +266,7 @@ function renderTabs(tabs) {
   }
 }
 
-function renderState(state, tabs = currentTabs) {
+function renderState(state, tabs = currentTabs, events = currentEvents) {
   currentState = state;
 
   const status = displayStatus(state);
@@ -214,6 +284,7 @@ function renderState(state, tabs = currentTabs) {
   reloadTabButton.disabled = state.networkState !== "error";
   autoRecoverFrozenTabsInput.checked = Boolean(state.settings?.autoRecoverFrozenTabs);
   renderTabs(tabs);
+  renderEvents(events);
 
   if (state.networkState === "reloading" || state.pageState === "reloading") {
     hintEl.textContent = "The ChatGPT tab is reloading. Waiting for the page to reconnect.";
@@ -239,7 +310,7 @@ function requestState() {
       return;
     }
 
-    renderState(response.state, response.tabs || []);
+    renderState(response.state, response.tabs || [], response.events || []);
   });
 }
 

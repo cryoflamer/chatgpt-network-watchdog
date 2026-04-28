@@ -4,12 +4,15 @@ const WATCH_INTERVAL_MS = 3000;
 const DONE_RESET_MS = 120000;
 const AUTO_RECOVER_DEBOUNCE_MS = 60000;
 const RELOAD_MIN_DISPLAY_MS = 3000;
+const MAX_EVENT_LOG_ITEMS = 20;
 const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
 const DIAGNOSTIC_LOG = false;
 
 const requests = new Map();
 const tabs = new Map();
 const conversations = new Map();
+const eventLog = [];
+let nextEventId = 1;
 const settings = {
   autoRecoverFrozenTabs: false,
 };
@@ -33,6 +36,29 @@ function debugLog(message, payload = {}) {
   }
 
   console.log(`[CTR:BG] ${message}`, payload);
+}
+
+function addEvent(type, tabId, message, details = {}) {
+  eventLog.unshift({
+    id: nextEventId,
+    at: now(),
+    type,
+    tabId: typeof tabId === "number" ? tabId : null,
+    message,
+    details,
+  });
+  nextEventId += 1;
+
+  if (eventLog.length > MAX_EVENT_LOG_ITEMS) {
+    eventLog.length = MAX_EVENT_LOG_ITEMS;
+  }
+}
+
+function recentEvents(limit = 10) {
+  return eventLog.slice(0, limit).map((event) => ({
+    ...event,
+    details: { ...event.details },
+  }));
 }
 
 function isChatGptBackendRequest(details) {
@@ -363,6 +389,7 @@ function openFreshChat(state, callback, sourceUrl = null) {
     if (chrome.runtime.lastError) {
       state.lastActionAt = now();
       state.lastAction = `open failed: ${chrome.runtime.lastError.message}`;
+      addEvent("ERR", state.tabId, "Open fresh chat failed", { error: chrome.runtime.lastError.message });
       notifyTab(state);
       callback?.({ ok: false, error: chrome.runtime.lastError.message, state: publicState(state) });
       return;
@@ -370,6 +397,7 @@ function openFreshChat(state, callback, sourceUrl = null) {
 
     state.lastActionAt = now();
     state.lastAction = `fresh chat opened: ${tab?.id ?? "unknown"}`;
+    addEvent("OPEN", state.tabId, "Fresh chat opened", { newTabId: tab?.id ?? null, targetUrl });
     console.log("[CTR:BG] fresh ChatGPT tab opened", {
       sourceTabId: state.tabId,
       newTabId: tab?.id,
@@ -388,6 +416,7 @@ function markTabReloading(state, source = "tab reloading") {
   state.lastReloadStartedAt = now();
   state.lastActionAt = state.lastReloadStartedAt;
   state.lastAction = source;
+  addEvent("RLD", state.tabId, "Tab reload started", { source });
   notifyTab(state);
 }
 
@@ -404,6 +433,7 @@ function finishTabReload(state) {
   state.lastReloadCompletedAt = now();
   state.lastActionAt = state.lastReloadCompletedAt;
   state.lastAction = "tab reload completed";
+  addEvent("RLD", state.tabId, "Tab reload completed");
   notifyTab(state);
 }
 
@@ -439,6 +469,7 @@ function reloadChatGptTab(state, callback) {
     if (chrome.runtime.lastError) {
       state.lastActionAt = now();
       state.lastAction = `reload failed: ${chrome.runtime.lastError.message}`;
+      addEvent("ERR", state.tabId, "Tab reload failed", { error: chrome.runtime.lastError.message });
       notifyTab(state);
       callback?.({ ok: false, error: chrome.runtime.lastError.message, state: publicState(state) });
       return;
@@ -502,12 +533,14 @@ function autoRecoverFrozenTab(state) {
   state.lastAutoRecoverAt = currentTime;
   state.lastActionAt = currentTime;
   state.lastAction = "auto-recovery requested for frozen tab";
+  addEvent("FRZ", state.tabId, "Auto-recovery requested for frozen tab");
   notifyTab(state);
 
   chrome.tabs.get(state.tabId, (tab) => {
     if (chrome.runtime.lastError || !tab?.id) {
       state.lastActionAt = now();
       state.lastAction = `auto-recovery failed: ${chrome.runtime.lastError?.message || "tab not found"}`;
+      addEvent("ERR", state.tabId, "Auto-recovery failed", { error: chrome.runtime.lastError?.message || "tab not found" });
       notifyTab(state);
       return;
     }
@@ -574,6 +607,10 @@ chrome.webRequest.onBeforeRequest.addListener(
       tabId: details.tabId,
       url: details.url,
     });
+    addEvent("GEN", details.tabId, "Generation started", {
+      requestId: details.requestId,
+      url: details.url,
+    });
 
     notifyTab(state);
   },
@@ -605,11 +642,18 @@ chrome.webRequest.onCompleted.addListener(
 
     updateConversationFromTab(request.tabId, conversationPatchFromState(state));
 
+    const durationMs = state.lastDoneAt - request.startedAt;
     console.log("[CTR:BG] ChatGPT generation completed", {
       requestId: details.requestId,
       tabId: request.tabId,
       statusCode: details.statusCode,
-      durationMs: state.lastDoneAt - request.startedAt,
+      durationMs,
+      url: request.url,
+    });
+    addEvent("DONE", request.tabId, "Generation completed", {
+      requestId: details.requestId,
+      statusCode: details.statusCode,
+      durationMs,
       url: request.url,
     });
 
@@ -645,11 +689,18 @@ chrome.webRequest.onErrorOccurred.addListener(
 
     updateConversationFromTab(request.tabId, conversationPatchFromState(state));
 
+    const durationMs = state.lastErrorAt - request.startedAt;
     console.warn("[CTR:BG] ChatGPT generation failed", {
       requestId: details.requestId,
       tabId: request.tabId,
       error: details.error,
-      durationMs: state.lastErrorAt - request.startedAt,
+      durationMs,
+      url: request.url,
+    });
+    addEvent("ERR", request.tabId, "Generation failed", {
+      requestId: details.requestId,
+      error: details.error,
+      durationMs,
       url: request.url,
     });
 
@@ -676,6 +727,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           state: publicState(state),
           tab: { id: tab.id, url: tab.url },
           tabs: tabsResponse.tabs || [],
+          events: recentEvents(),
         });
       });
     });
@@ -746,6 +798,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           state.lastAction = settings.autoRecoverFrozenTabs
             ? "auto-recovery enabled"
             : "auto-recovery disabled";
+          addEvent("SET", state.tabId, state.lastAction);
           notifyTab(state);
           autoRecoverFrozenTab(state);
         }
@@ -875,9 +928,14 @@ setInterval(() => {
     ) {
       if (state.pageState !== "frozen") {
         state.pageState = "frozen";
+        const msSinceHeartbeat = currentTime - state.lastHeartbeatAt;
         console.warn("[CTR:BG] ChatGPT tab heartbeat missed", {
           tabId: state.tabId,
-          msSinceHeartbeat: currentTime - state.lastHeartbeatAt,
+          msSinceHeartbeat,
+          networkState: state.networkState,
+        });
+        addEvent("FRZ", state.tabId, "Page heartbeat missed", {
+          msSinceHeartbeat,
           networkState: state.networkState,
         });
         changed = true;

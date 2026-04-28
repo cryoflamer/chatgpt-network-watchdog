@@ -27,6 +27,7 @@ The extension observes ChatGPT runtime state from the background worker and expo
 - Updates the extension badge with compact states: `GEN`, `DONE`, `FRZ`, and `ERR`.
 - Shows popup diagnostics for network state, page heartbeat, generation duration, last request, and errors.
 - Shows a multi-tab state view for all open ChatGPT tabs, with per-tab **Open fresh** and **Reload** actions.
+- Shows a short recent event log for state transitions such as `GEN`, `DONE`, `ERR`, `RLD`, `FRZ`, and `OPEN`.
 - Shows an **Open current chat in fresh tab** button after generation completion or freeze detection.
 - Shows a **Reload tab** button for network error states, where opening a fresh tab may not help.
 - Provides an optional **Auto-recover frozen tabs** mode that opens the current chat URL in a fresh tab only when the backend response is done and the page heartbeat is stale.
@@ -80,6 +81,20 @@ ERR · 4.8s · background · /c/...
 ```
 
 Each tab row has its own **Open fresh** action. The **Reload** action is enabled for tabs in `ERR` state.
+
+## Event log
+
+The popup includes the latest watchdog events, for example:
+
+```text
+GEN · Generation started · tab 12 · /backend-api/f/conversation
+DONE · Generation completed · tab 12 · 36.0s
+ERR · Generation failed · tab 12 · net::ERR_QUIC_PROTOCOL_ERROR
+RLD · Tab reload started · tab 12
+OPEN · Fresh chat opened · tab 12 · /c/...
+```
+
+The log is kept in the background service worker and capped to a short in-memory history so it stays lightweight.
 
 ## Hotkey
 
