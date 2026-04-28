@@ -175,6 +175,28 @@ function updateConversationState(conversationId, patch) {
   });
 }
 
+function canMirrorConversationState(state, conversation) {
+  if (!conversation || !conversation.updatedAt) {
+    return false;
+  }
+
+  if (state.networkState === "generating" && conversation.networkState !== "generating") {
+    const localStartedAt = state.generationStartedAt || 0;
+    const conversationUpdatedAt = conversation.updatedAt || 0;
+    if (localStartedAt && conversationUpdatedAt < localStartedAt) {
+      addEvent("DESYNC", state.tabId, "Ignored stale conversation state during generation", {
+        localNetworkState: state.networkState,
+        conversationNetworkState: conversation.networkState || "unknown",
+        localStartedAt,
+        conversationUpdatedAt,
+      });
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function syncStateFromConversation(state, tabUrl) {
   const conversationId = conversationIdFromUrl(tabUrl) || state.conversationId;
   if (!conversationId) {
@@ -187,7 +209,7 @@ function syncStateFromConversation(state, tabUrl) {
 
   state.conversationId = conversationId;
   const conversation = conversations.get(conversationId);
-  if (!conversation || !conversation.updatedAt) {
+  if (!canMirrorConversationState(state, conversation)) {
     return false;
   }
 
@@ -213,7 +235,10 @@ function syncStateFromConversation(state, tabUrl) {
   state.lastStuckAt = conversation.lastStuckAt || null;
   state.lastBackendRequestAt = conversation.lastBackendRequestAt || state.lastBackendRequestAt;
   state.lastBackendRequestUrl = conversation.lastBackendRequestUrl || state.lastBackendRequestUrl;
-  state.currentRequestId = conversation.networkState === "generating" ? state.currentRequestId : null;
+  if (conversation.networkState !== "generating") {
+    state.currentRequestId = null;
+    state.activeGenerationRequestId = null;
+  }
   state.mirroredConversationState = true;
   state.mirroredConversationUpdatedAt = conversation.updatedAt;
 
@@ -270,6 +295,7 @@ function getTabState(tabId) {
       backgroundState: "connected",
       lastHeartbeatAt: 0,
       currentRequestId: null,
+      activeGenerationRequestId: null,
       generationStartedAt: null,
       lastDoneAt: null,
       lastErrorAt: null,
@@ -312,6 +338,7 @@ function publicState(state) {
     lastStuckAt: state.lastStuckAt,
     lastBackendRequestAt: state.lastBackendRequestAt,
     lastBackendRequestUrl: state.lastBackendRequestUrl,
+    activeGenerationRequestId: state.activeGenerationRequestId,
     lastActionAt: state.lastActionAt,
     lastAction: state.lastAction,
     lastAutoRecoverAt: state.lastAutoRecoverAt,
@@ -466,6 +493,7 @@ function markTabReloading(state, source = "tab reloading") {
   state.networkState = "reloading";
   state.pageState = "reloading";
   state.currentRequestId = null;
+  state.activeGenerationRequestId = null;
   state.lastReloadStartedAt = now();
   state.lastActionAt = state.lastReloadStartedAt;
   state.lastAction = source;
@@ -640,6 +668,7 @@ chrome.webRequest.onBeforeRequest.addListener(
     const state = getTabState(details.tabId);
     state.networkState = "generating";
     state.currentRequestId = details.requestId;
+    state.activeGenerationRequestId = details.requestId;
     state.generationStartedAt = now();
     state.lastDoneAt = null;
     state.lastErrorAt = null;
@@ -689,8 +718,20 @@ chrome.webRequest.onCompleted.addListener(
     }
 
     const state = getTabState(request.tabId);
+    if (state.activeGenerationRequestId && state.activeGenerationRequestId !== details.requestId) {
+      addEvent("DESYNC", request.tabId, "Ignored completion for stale generation request", {
+        requestId: details.requestId,
+        activeGenerationRequestId: state.activeGenerationRequestId,
+        url: request.url,
+      });
+      requests.delete(details.requestId);
+      notifyTab(state);
+      return;
+    }
+
     state.networkState = "done";
     state.currentRequestId = null;
+    state.activeGenerationRequestId = null;
     state.lastDoneAt = now();
     state.lastError = null;
     state.lastStuckAt = null;
@@ -738,8 +779,21 @@ chrome.webRequest.onErrorOccurred.addListener(
     }
 
     const state = getTabState(request.tabId);
+    if (state.activeGenerationRequestId && state.activeGenerationRequestId !== details.requestId) {
+      addEvent("DESYNC", request.tabId, "Ignored error for stale generation request", {
+        requestId: details.requestId,
+        activeGenerationRequestId: state.activeGenerationRequestId,
+        error: details.error,
+        url: request.url,
+      });
+      requests.delete(details.requestId);
+      notifyTab(state);
+      return;
+    }
+
     state.networkState = "error";
     state.currentRequestId = null;
+    state.activeGenerationRequestId = null;
     state.lastErrorAt = now();
     state.lastError = details.error;
     state.lastStuckAt = null;
