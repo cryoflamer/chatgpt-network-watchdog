@@ -23,6 +23,7 @@ import {
 import { createEventLog } from "./background/event-log.js";
 import { createSettingsStore } from "./background/settings.js";
 import { createTabRegistry } from "./background/tabs.js";
+import { createAlertController } from "./background/alerts.js";
 
 const requests = new Map();
 const tabs = createTabRegistry();
@@ -57,9 +58,6 @@ const {
   soundVolumePercent,
   publicSettings,
 } = settingsStore;
-let lastSoundAlertAt = 0;
-let lastNotificationAt = 0;
-const notificationTargets = new Map();
 
 console.log("[CTR:BG] service worker loaded", {
   href: chrome.runtime.getURL("src/background.js"),
@@ -90,164 +88,19 @@ const {
   debugEventTypes: DEBUG_EVENT_TYPES,
 });
 
-function triggerSoundAlert(state, alertType) {
-  if (!settings.soundAlerts || !state?.tabId) {
-    return;
-  }
-
-  const currentTime = now();
-  if (currentTime - lastSoundAlertAt < SOUND_ALERT_DEBOUNCE_MS) {
-    return;
-  }
-  lastSoundAlertAt = currentTime;
-
-  addEvent("ALERT", state.tabId, `Sound alert requested: ${alertType}`, { volume: soundVolumePercent() });
-  chrome.tabs.sendMessage(
-    state.tabId,
-    { type: "watchdog-play-sound", alertType, volume: settings.soundVolume },
-    () => {
-      void chrome.runtime.lastError;
-    },
-  );
-}
-
-function compactChatTitle(title) {
-  const normalized = String(title || "ChatGPT").replace(/\s*[|—-]\s*ChatGPT\s*$/i, "").trim();
-  return normalized || "ChatGPT chat";
-}
-
-function notificationText(alertType, state, details = {}, tab = null) {
-  const chatTitle = compactChatTitle(details.chatTitle || tab?.title);
-  const title = `ChatGPT: ${chatTitle}`;
-
-  if (alertType === "DONE") {
-    return {
-      title,
-      message: `Response ready after ${((details.durationMs ?? generationDurationMs(state) ?? 0) / 1000).toFixed(1)}s`,
-    };
-  }
-
-  if (alertType === "ERR") {
-    return {
-      title,
-      message: state.lastError || details.error || "Generation failed",
-    };
-  }
-
-  if (alertType === "FRZ") {
-    return {
-      title,
-      message: "Response is ready, but the tab heartbeat is stale.",
-    };
-  }
-
-  return {
-    title,
-    message: alertType,
-  };
-}
-
-function createDesktopNotification(state, alertType, details, tab) {
-  const currentTime = now();
-  const text = notificationText(alertType, state, details, tab);
-  const notificationId = `cnw-${state.tabId}-${alertType.toLowerCase()}-${currentTime}`;
-
-  notificationTargets.set(notificationId, {
-    tabId: state.tabId,
-    windowId: tab?.windowId ?? null,
-    url: tab?.url || details.url || null,
-    alertType,
-    createdAt: currentTime,
-  });
-
-  chrome.notifications.create(
-    notificationId,
-    {
-      type: "basic",
-      iconUrl: chrome.runtime.getURL("icons/icon128.png"),
-      title: text.title,
-      message: text.message,
-      priority: alertType === "ERR" || alertType === "FRZ" ? 1 : 0,
-    },
-    () => {
-      if (chrome.runtime.lastError) {
-        notificationTargets.delete(notificationId);
-        addEvent("ERR", state.tabId, "Desktop notification failed", { error: chrome.runtime.lastError.message });
-        return;
-      }
-
-      addEvent("ALERT", state.tabId, `Desktop notification sent: ${alertType}`, {
-        notificationId,
-        title: text.title,
-        chatTitle: compactChatTitle(tab?.title),
-      });
-    },
-  );
-}
-
-function triggerDesktopNotification(state, alertType, details = {}) {
-  if ((!settings.desktopNotifications && !details.force) || !state?.tabId) {
-    return;
-  }
-
-  const currentTime = now();
-  if (currentTime - lastNotificationAt < NOTIFICATION_DEBOUNCE_MS) {
-    return;
-  }
-  lastNotificationAt = currentTime;
-
-  chrome.tabs.get(state.tabId, (tab) => {
-    if (chrome.runtime.lastError || !tab?.id) {
-      createDesktopNotification(state, alertType, details, null);
-      return;
-    }
-
-    createDesktopNotification(state, alertType, details, tab);
-  });
-}
-
-chrome.notifications.onClicked.addListener((notificationId) => {
-  const target = notificationTargets.get(notificationId);
-  if (!target?.tabId) {
-    return;
-  }
-
-  chrome.tabs.update(target.tabId, { active: true }, (tab) => {
-    if (chrome.runtime.lastError || !tab?.id) {
-      addEvent("ERR", target.tabId, "Notification click failed", {
-        notificationId,
-        error: chrome.runtime.lastError?.message || "tab not found",
-      });
-      notificationTargets.delete(notificationId);
-      return;
-    }
-
-    const windowId = tab.windowId ?? target.windowId;
-    if (typeof windowId === "number") {
-      chrome.windows.update(windowId, { focused: true }, () => {
-        void chrome.runtime.lastError;
-      });
-    }
-
-    addEvent("OPEN", target.tabId, "Notification clicked; tab focused", {
-      notificationId,
-      alertType: target.alertType,
-    });
-    notificationTargets.delete(notificationId);
-    chrome.notifications.clear(notificationId, () => {
-      void chrome.runtime.lastError;
-    });
-  });
+const {
+  triggerAlerts,
+  triggerDesktopNotification,
+} = createAlertController({
+  chromeApi: chrome,
+  now,
+  settings,
+  addEvent,
+  soundVolumePercent,
+  generationDurationMs,
+  soundAlertDebounceMs: SOUND_ALERT_DEBOUNCE_MS,
+  notificationDebounceMs: NOTIFICATION_DEBOUNCE_MS,
 });
-
-chrome.notifications.onClosed.addListener((notificationId) => {
-  notificationTargets.delete(notificationId);
-});
-
-function triggerAlerts(state, alertType, details = {}) {
-  triggerSoundAlert(state, alertType);
-  triggerDesktopNotification(state, alertType, details);
-}
 
 function isChatGptBackendRequest(details) {
   try {
