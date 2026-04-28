@@ -67,6 +67,10 @@ function displayStatus(state) {
     return "ERR";
   }
 
+  if (state.networkState === "stuck") {
+    return "STUCK";
+  }
+
   if (state.networkState === "generating") {
     return "GEN";
   }
@@ -89,6 +93,10 @@ function statusClass(status) {
 
   if (status === "FRZ") {
     return "frozen";
+  }
+
+  if (status === "STUCK") {
+    return "stuck";
   }
 
   if (status === "GEN") {
@@ -296,6 +304,8 @@ function renderState(state, tabs = currentTabs, events = currentEvents) {
       : "The page heartbeat is stale. Opening a fresh chat is safe.";
   } else if (state.networkState === "done") {
     hintEl.textContent = "The response has finished at the network level. Alt+Shift+N opens the current chat in a fresh tab.";
+  } else if (state.networkState === "stuck") {
+    hintEl.textContent = "The generation request has been running for unusually long without finishing or failing.";
   } else if (state.networkState === "generating") {
     hintEl.textContent = "A ChatGPT generation request is in progress.";
   } else {

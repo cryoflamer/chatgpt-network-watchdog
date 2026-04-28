@@ -27,7 +27,7 @@ The extension observes ChatGPT runtime state from the background worker and expo
 - Updates the extension badge with compact states: `GEN`, `DONE`, `FRZ`, and `ERR`.
 - Shows popup diagnostics for network state, page heartbeat, generation duration, last request, and errors.
 - Shows a multi-tab state view for all open ChatGPT tabs, with per-tab **Open fresh** and **Reload** actions.
-- Shows a short recent event log for state transitions such as `GEN`, `DONE`, `ERR`, `RLD`, `FRZ`, and `OPEN`.
+- Shows a short recent event log for state transitions such as `GEN`, `DONE`, `ERR`, `RLD`, `FRZ`, `STUCK`, and `OPEN`.
 - Shows an **Open current chat in fresh tab** button after generation completion or freeze detection.
 - Shows a **Reload tab** button for network error states, where opening a fresh tab may not help.
 - Provides an optional **Auto-recover frozen tabs** mode that opens the current chat URL in a fresh tab only when the backend response is done and the page heartbeat is stale.
@@ -67,7 +67,7 @@ Page: frozen
 Planned follow-up patches:
 
 1. Add settings for heartbeat and auto-recovery timeouts.
-2. Add defensive handling for regenerated responses and stuck-generation states.
+2. Add defensive handling for regenerated responses.
 3. Add optional sound alerts for DONE, FRZ, and ERR state changes.
 
 ## Multi-tab view
@@ -78,6 +78,7 @@ The popup lists all detected ChatGPT tabs and shows a compact state for each one
 DONE · 36.0s · active · /c/...
 GEN · 12.4s · background · /c/...
 ERR · 4.8s · background · /c/...
+STUCK · 90.0s · background · /c/...
 ```
 
 Each tab row has its own **Open fresh** action. The **Reload** action is enabled for tabs in `ERR` state.
@@ -90,11 +91,22 @@ The popup includes the latest watchdog events, for example:
 GEN · Generation started · tab 12 · /backend-api/f/conversation
 DONE · Generation completed · tab 12 · 36.0s
 ERR · Generation failed · tab 12 · net::ERR_QUIC_PROTOCOL_ERROR
+STUCK · Generation marked stuck · tab 12 · 90.0s
 RLD · Tab reload started · tab 12
 OPEN · Fresh chat opened · tab 12 · /c/...
 ```
 
 The log is kept in the background service worker and capped to a short in-memory history so it stays lightweight.
+
+## Stuck generation detection
+
+If a ChatGPT generation request stays active for longer than 90 seconds without a network completion or error, the watchdog marks it as:
+
+```text
+STUCK
+```
+
+This is distinct from `ERR` and `FRZ`: the request has not failed at the transport level, and the page heartbeat may still be alive, but the generation has been running unusually long.
 
 ## Hotkey
 

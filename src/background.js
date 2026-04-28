@@ -4,6 +4,7 @@ const WATCH_INTERVAL_MS = 3000;
 const DONE_RESET_MS = 120000;
 const AUTO_RECOVER_DEBOUNCE_MS = 60000;
 const RELOAD_MIN_DISPLAY_MS = 3000;
+const STUCK_GENERATION_TIMEOUT_MS = 90000;
 const MAX_EVENT_LOG_ITEMS = 20;
 const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
 const DIAGNOSTIC_LOG = false;
@@ -109,6 +110,7 @@ function conversationPatchFromState(state) {
     lastDoneAt: state.lastDoneAt,
     lastErrorAt: state.lastErrorAt,
     lastError: state.lastError,
+    lastStuckAt: state.lastStuckAt,
     lastBackendRequestAt: state.lastBackendRequestAt,
     lastBackendRequestUrl: state.lastBackendRequestUrl,
   };
@@ -164,6 +166,7 @@ function syncStateFromConversation(state, tabUrl) {
   state.lastDoneAt = conversation.lastDoneAt || null;
   state.lastErrorAt = conversation.lastErrorAt || null;
   state.lastError = conversation.lastError || null;
+  state.lastStuckAt = conversation.lastStuckAt || null;
   state.lastBackendRequestAt = conversation.lastBackendRequestAt || state.lastBackendRequestAt;
   state.lastBackendRequestUrl = conversation.lastBackendRequestUrl || state.lastBackendRequestUrl;
   state.currentRequestId = conversation.networkState === "generating" ? state.currentRequestId : null;
@@ -227,6 +230,7 @@ function getTabState(tabId) {
       lastDoneAt: null,
       lastErrorAt: null,
       lastError: null,
+      lastStuckAt: null,
       lastBackendRequestAt: null,
       lastBackendRequestUrl: null,
       lastActionAt: null,
@@ -261,6 +265,7 @@ function publicState(state) {
     lastDoneAt: state.lastDoneAt,
     lastErrorAt: state.lastErrorAt,
     lastError: state.lastError,
+    lastStuckAt: state.lastStuckAt,
     lastBackendRequestAt: state.lastBackendRequestAt,
     lastBackendRequestUrl: state.lastBackendRequestUrl,
     lastActionAt: state.lastActionAt,
@@ -309,6 +314,10 @@ function badgeForState(state) {
 
   if (state.networkState === "error") {
     return { text: "ERR", color: "#991b1b" };
+  }
+
+  if (state.networkState === "stuck") {
+    return { text: "STK", color: "#b45309" };
   }
 
   if (state.networkState === "generating") {
@@ -591,6 +600,7 @@ chrome.webRequest.onBeforeRequest.addListener(
     state.lastDoneAt = null;
     state.lastErrorAt = null;
     state.lastError = null;
+    state.lastStuckAt = null;
     state.lastBackendRequestAt = state.generationStartedAt;
     state.lastBackendRequestUrl = details.url;
 
@@ -639,6 +649,7 @@ chrome.webRequest.onCompleted.addListener(
     state.currentRequestId = null;
     state.lastDoneAt = now();
     state.lastError = null;
+    state.lastStuckAt = null;
 
     updateConversationFromTab(request.tabId, conversationPatchFromState(state));
 
@@ -686,6 +697,7 @@ chrome.webRequest.onErrorOccurred.addListener(
     state.currentRequestId = null;
     state.lastErrorAt = now();
     state.lastError = details.error;
+    state.lastStuckAt = null;
 
     updateConversationFromTab(request.tabId, conversationPatchFromState(state));
 
@@ -905,6 +917,34 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
+function markGenerationStuck(state, currentTime) {
+  if (state.networkState !== "generating" || !state.generationStartedAt) {
+    return false;
+  }
+
+  const generationAgeMs = currentTime - state.generationStartedAt;
+  if (generationAgeMs < STUCK_GENERATION_TIMEOUT_MS) {
+    return false;
+  }
+
+  state.networkState = "stuck";
+  state.lastStuckAt = currentTime;
+  state.lastActionAt = currentTime;
+  state.lastAction = "generation marked stuck";
+  updateConversationFromTab(state.tabId, conversationPatchFromState(state));
+  console.warn("[CTR:BG] ChatGPT generation marked stuck", {
+    tabId: state.tabId,
+    generationAgeMs,
+    requestId: state.currentRequestId,
+  });
+  addEvent("STUCK", state.tabId, "Generation marked stuck", {
+    generationAgeMs,
+    requestId: state.currentRequestId,
+  });
+  return true;
+}
+
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabs.delete(tabId);
 
@@ -941,6 +981,10 @@ setInterval(() => {
         changed = true;
       }
       autoRecoverFrozenTab(state);
+    }
+
+    if (markGenerationStuck(state, currentTime)) {
+      changed = true;
     }
 
     if (state.networkState === "done" && state.lastDoneAt && currentTime - state.lastDoneAt > DONE_RESET_MS) {
