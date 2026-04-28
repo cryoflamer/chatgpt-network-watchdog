@@ -1,4 +1,5 @@
 const statusEl = document.getElementById("status");
+const statusSummaryEl = document.getElementById("statusSummary");
 const networkEl = document.getElementById("network");
 const pageEl = document.getElementById("page");
 const durationEl = document.getElementById("duration");
@@ -22,13 +23,28 @@ let currentState = null;
 let currentTabs = [];
 let currentEvents = [];
 
-function formatAge(timestamp) {
+function formatRelativeAge(timestamp, { withAgo = true } = {}) {
   if (!timestamp) {
     return "never";
   }
 
   const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
-  return `${seconds}s ago`;
+  let value;
+  if (seconds < 3) {
+    value = "now";
+  } else if (seconds < 60) {
+    value = `${seconds}s`;
+  } else {
+    const minutes = Math.floor(seconds / 60);
+    const remainder = seconds % 60;
+    value = remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+  }
+
+  return withAgo && value !== "now" ? `${value} ago` : value;
+}
+
+function formatAge(timestamp) {
+  return formatRelativeAge(timestamp);
 }
 
 function formatDuration(durationMs) {
@@ -40,18 +56,47 @@ function formatDuration(durationMs) {
 }
 
 function formatShortAge(timestamp) {
-  if (!timestamp) {
-    return "never";
-  }
+  return formatRelativeAge(timestamp, { withAgo: false });
+}
 
-  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
+function statusLabel(status) {
+  const labels = {
+    IDLE: "Idle",
+    STALE: "Stale",
+    GEN: "Generating",
+    STUCK: "Stuck",
+    RLD: "Reloading",
+    DONE: "Done",
+    FRZ: "Frozen",
+    ERR: "Error",
+  };
+  return labels[status] || status;
+}
 
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return `${minutes}m ${remainder}s`;
+function statusSummary(state) {
+  const status = displayStatus(state);
+  if (status === "GEN") {
+    return `Generation running for ${formatDuration(state.generationDurationMs)}.`;
+  }
+  if (status === "STUCK") {
+    return `Generation appears stuck after ${formatDuration(state.generationDurationMs)}.`;
+  }
+  if (status === "DONE") {
+    return `Response completed ${formatAge(state.lastDoneAt)}.`;
+  }
+  if (status === "FRZ") {
+    return "Response is done, but the page heartbeat is stale.";
+  }
+  if (status === "ERR") {
+    return `Network error${state.lastError ? `: ${state.lastError}` : ""}.`;
+  }
+  if (status === "RLD") {
+    return "Tab reload is in progress.";
+  }
+  if (status === "STALE") {
+    return "Idle tab heartbeat is stale; no recovery needed.";
+  }
+  return "Waiting for the next generation request.";
 }
 
 function formatBackendPath(url) {
@@ -219,33 +264,33 @@ function tabActivityLine(tab) {
   const status = displayStatus(state);
 
   if (status === "GEN" || status === "STUCK") {
-    return `running ${formatDuration(state.generationDurationMs)}`;
+    return `running · ${formatDuration(state.generationDurationMs)}`;
   }
 
   if (status === "DONE") {
-    return `done ${formatShortAge(state.lastDoneAt)} ago`;
+    return `done · ${formatAge(state.lastDoneAt)}`;
   }
 
   if (status === "ERR") {
-    return `error ${formatShortAge(state.lastErrorAt)} ago`;
+    return `error · ${formatAge(state.lastErrorAt)}`;
   }
 
   if (status === "RLD") {
-    return `reloading ${formatShortAge(state.lastReloadStartedAt)} ago`;
+    return `reloading · ${formatAge(state.lastReloadStartedAt)}`;
   }
 
   if (status === "FRZ") {
     const attempts = state.autoRecoverAttempts || 0;
     const maxAttempts = state.autoRecoverMaxAttempts || 0;
     const attemptText = maxAttempts ? ` · auto ${attempts}/${maxAttempts}` : "";
-    return `heartbeat stale ${formatShortAge(state.lastHeartbeatAt)} ago${attemptText}`;
+    return `heartbeat stale · ${formatAge(state.lastHeartbeatAt)}${attemptText}`;
   }
 
   if (status === "STALE") {
-    return `inactive ${formatShortAge(state.lastHeartbeatAt)} ago`;
+    return `inactive · ${formatAge(state.lastHeartbeatAt)}`;
   }
 
-  return state.lastHeartbeatAt ? `alive ${formatShortAge(state.lastHeartbeatAt)} ago` : "not attached yet";
+  return state.lastHeartbeatAt ? `alive · ${formatAge(state.lastHeartbeatAt)}` : "not attached yet";
 }
 
 function tabLine(tab) {
@@ -422,7 +467,7 @@ function renderTabs(tabs) {
 
     const badge = document.createElement("span");
     badge.className = `tab-status status status-${statusClass(status)}`;
-    badge.textContent = status;
+    badge.textContent = statusLabel(status);
     header.appendChild(badge);
 
     card.appendChild(header);
@@ -488,8 +533,9 @@ function renderState(state, tabs = currentTabs, events = currentEvents) {
   currentState = state;
 
   const status = displayStatus(state);
-  statusEl.textContent = status;
+  statusEl.textContent = statusLabel(status);
   statusEl.className = `status status-${statusClass(status)}`;
+  statusSummaryEl.textContent = statusSummary(state);
 
   networkEl.textContent = state.networkState || "unknown";
   pageEl.textContent = state.pageState || "unknown";
