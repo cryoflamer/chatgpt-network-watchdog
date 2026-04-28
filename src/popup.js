@@ -226,7 +226,10 @@ function tabActivityLine(tab) {
   }
 
   if (status === "FRZ") {
-    return `heartbeat stale ${formatShortAge(state.lastHeartbeatAt)} ago`;
+    const attempts = state.autoRecoverAttempts || 0;
+    const maxAttempts = state.autoRecoverMaxAttempts || 0;
+    const attemptText = maxAttempts ? ` · auto ${attempts}/${maxAttempts}` : "";
+    return `heartbeat stale ${formatShortAge(state.lastHeartbeatAt)} ago${attemptText}`;
   }
 
   return state.lastHeartbeatAt ? `alive ${formatShortAge(state.lastHeartbeatAt)} ago` : "not attached yet";
@@ -256,6 +259,14 @@ function formatEventDetail(event) {
 
   if (details.statusCode) {
     parts.push(`HTTP ${details.statusCode}`);
+  }
+
+  if (details.attempt !== undefined && details.maxAttempts !== undefined) {
+    parts.push(`attempt ${details.attempt}/${details.maxAttempts}`);
+  }
+
+  if (details.retryDelayMs !== undefined) {
+    parts.push(`retry delay ${formatDuration(details.retryDelayMs)}`);
   }
 
   if (details.requestId) {
@@ -487,8 +498,10 @@ function renderState(state, tabs = currentTabs, events = currentEvents) {
   } else if (state.networkState === "error") {
     hintEl.textContent = "Network error detected. Reloading the current ChatGPT tab is safer than opening a fresh one.";
   } else if (state.pageState === "frozen") {
+    const attempts = state.autoRecoverAttempts || 0;
+    const maxAttempts = state.autoRecoverMaxAttempts || 0;
     hintEl.textContent = state.settings?.autoRecoverFrozenTabs
-      ? "The page heartbeat is stale. Auto-recovery can open this chat in a fresh tab."
+      ? `The page heartbeat is stale. Auto-recovery attempts: ${attempts}/${maxAttempts}.`
       : "The page heartbeat is stale. Opening a fresh chat is safe.";
   } else if (state.networkState === "done") {
     hintEl.textContent = "The response has finished at the network level. Alt+Shift+N opens the current chat in a fresh tab.";

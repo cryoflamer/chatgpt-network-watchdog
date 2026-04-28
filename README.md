@@ -140,4 +140,4 @@ Network: done
 Page: frozen
 ```
 
-In that state, the backend response has completed but the content script heartbeat is stale. The extension opens the current chat URL in a fresh tab and leaves the old tab open. It does not auto-recover `ERR` states.
+In that state, the backend response has completed but the content script heartbeat is stale. The extension opens the current chat URL in a fresh tab and leaves the old tab open. It does not auto-recover `ERR` states. Auto-recovery is capped at two attempts per frozen-tab cycle and uses a cooldown before retrying, then logs that it gave up instead of opening tabs indefinitely.

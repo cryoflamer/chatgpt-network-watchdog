@@ -3,6 +3,8 @@ const HEARTBEAT_TIMEOUT_MS = 15000;
 const WATCH_INTERVAL_MS = 3000;
 const DONE_RESET_MS = 120000;
 const AUTO_RECOVER_DEBOUNCE_MS = 60000;
+const AUTO_RECOVER_MAX_ATTEMPTS = 2;
+const AUTO_RECOVER_RETRY_BASE_DELAY_MS = 30000;
 const RELOAD_MIN_DISPLAY_MS = 3000;
 const STUCK_GENERATION_TIMEOUT_MS = 90000;
 const STUCK_BACKEND_QUIET_MS = 30000;
@@ -307,6 +309,8 @@ function getTabState(tabId) {
       lastActionAt: null,
       lastAction: null,
       lastAutoRecoverAt: null,
+      autoRecoverAttempts: 0,
+      autoRecoverGaveUpAt: null,
       conversationId: null,
       mirroredConversationState: false,
       mirroredConversationUpdatedAt: null,
@@ -343,6 +347,9 @@ function publicState(state) {
     lastActionAt: state.lastActionAt,
     lastAction: state.lastAction,
     lastAutoRecoverAt: state.lastAutoRecoverAt,
+    autoRecoverAttempts: state.autoRecoverAttempts || 0,
+    autoRecoverMaxAttempts: AUTO_RECOVER_MAX_ATTEMPTS,
+    autoRecoverGaveUpAt: state.autoRecoverGaveUpAt || null,
     lastReloadStartedAt: state.lastReloadStartedAt,
     lastReloadCompletedAt: state.lastReloadCompletedAt,
     settings: { ...settings, soundVolumePercent: soundVolumePercent() },
@@ -492,6 +499,7 @@ function openFreshChat(state, callback, sourceUrl = null) {
 
 function markTabReloading(state, source = "tab reloading") {
   state.networkState = "reloading";
+  resetAutoRecovery(state);
   state.pageState = "reloading";
   state.currentRequestId = null;
   state.activeGenerationRequestId = null;
@@ -598,6 +606,20 @@ function reloadChatGptTabById(tabId, callback) {
   });
 }
 
+function resetAutoRecovery(state) {
+  state.autoRecoverAttempts = 0;
+  state.autoRecoverGaveUpAt = null;
+}
+
+function nextAutoRecoverDelayMs(state) {
+  const attempts = state.autoRecoverAttempts || 0;
+  if (attempts <= 0) {
+    return 0;
+  }
+
+  return Math.max(AUTO_RECOVER_DEBOUNCE_MS, AUTO_RECOVER_RETRY_BASE_DELAY_MS * (2 ** (attempts - 1)));
+}
+
 function autoRecoverFrozenTab(state) {
   if (!settings.autoRecoverFrozenTabs) {
     return;
@@ -608,21 +630,47 @@ function autoRecoverFrozenTab(state) {
   }
 
   const currentTime = now();
-  if (state.lastAutoRecoverAt && currentTime - state.lastAutoRecoverAt < AUTO_RECOVER_DEBOUNCE_MS) {
+  const attempts = state.autoRecoverAttempts || 0;
+  if (attempts >= AUTO_RECOVER_MAX_ATTEMPTS) {
+    if (!state.autoRecoverGaveUpAt) {
+      state.autoRecoverGaveUpAt = currentTime;
+      state.lastActionAt = currentTime;
+      state.lastAction = "auto-recovery gave up for frozen tab";
+      addEvent("FRZ", state.tabId, "Auto-recovery gave up for frozen tab", {
+        attempts,
+        maxAttempts: AUTO_RECOVER_MAX_ATTEMPTS,
+      });
+      notifyTab(state);
+    }
     return;
   }
 
+  const retryDelayMs = nextAutoRecoverDelayMs(state);
+  if (state.lastAutoRecoverAt && currentTime - state.lastAutoRecoverAt < retryDelayMs) {
+    return;
+  }
+
+  const nextAttempt = attempts + 1;
+  state.autoRecoverAttempts = nextAttempt;
   state.lastAutoRecoverAt = currentTime;
   state.lastActionAt = currentTime;
-  state.lastAction = "auto-recovery requested for frozen tab";
-  addEvent("FRZ", state.tabId, "Auto-recovery requested for frozen tab");
+  state.lastAction = `auto-recovery attempt ${nextAttempt}/${AUTO_RECOVER_MAX_ATTEMPTS} for frozen tab`;
+  addEvent("FRZ", state.tabId, "Auto-recovery attempt for frozen tab", {
+    attempt: nextAttempt,
+    maxAttempts: AUTO_RECOVER_MAX_ATTEMPTS,
+    retryDelayMs,
+  });
   notifyTab(state);
 
   chrome.tabs.get(state.tabId, (tab) => {
     if (chrome.runtime.lastError || !tab?.id) {
       state.lastActionAt = now();
       state.lastAction = `auto-recovery failed: ${chrome.runtime.lastError?.message || "tab not found"}`;
-      addEvent("ERR", state.tabId, "Auto-recovery failed", { error: chrome.runtime.lastError?.message || "tab not found" });
+      addEvent("ERR", state.tabId, "Auto-recovery failed", {
+        attempt: nextAttempt,
+        maxAttempts: AUTO_RECOVER_MAX_ATTEMPTS,
+        error: chrome.runtime.lastError?.message || "tab not found",
+      });
       notifyTab(state);
       return;
     }
@@ -630,6 +678,8 @@ function autoRecoverFrozenTab(state) {
     console.warn("[CTR:BG] auto-recovering frozen ChatGPT tab", {
       sourceTabId: state.tabId,
       sourceUrl: tab.url,
+      attempt: nextAttempt,
+      maxAttempts: AUTO_RECOVER_MAX_ATTEMPTS,
     });
     openFreshChat(state, null, tab.url);
   });
@@ -668,6 +718,7 @@ chrome.webRequest.onBeforeRequest.addListener(
 
     const state = getTabState(details.tabId);
     state.networkState = "generating";
+    resetAutoRecovery(state);
     state.currentRequestId = details.requestId;
     state.activeGenerationRequestId = details.requestId;
     state.generationStartedAt = now();
@@ -793,6 +844,7 @@ chrome.webRequest.onErrorOccurred.addListener(
     }
 
     state.networkState = "error";
+    resetAutoRecovery(state);
     state.currentRequestId = null;
     state.activeGenerationRequestId = null;
     state.lastErrorAt = now();
@@ -1024,6 +1076,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "watchdog-heartbeat") {
     state.lastHeartbeatAt = now();
+    if (state.pageState === "frozen") {
+      resetAutoRecovery(state);
+    }
     if (state.pageState !== "reloading") {
       state.pageState = "alive";
     }
@@ -1035,6 +1090,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "watchdog-hello") {
     state.lastHeartbeatAt = now();
+    if (state.pageState === "frozen") {
+      resetAutoRecovery(state);
+    }
     if (state.pageState !== "reloading") {
       state.pageState = "alive";
     }
