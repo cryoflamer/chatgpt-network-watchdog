@@ -114,13 +114,22 @@
 
       .tab-card {
         border: 1px solid #374151;
+        border-left-width: 4px;
         border-radius: 10px;
         padding: 8px;
         background: #1f2937;
       }
 
       .tab-card.active {
+        background: #263244;
         border-color: #6b7280;
+      }
+
+      .tab-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
       }
 
       .tab-title {
@@ -129,6 +138,19 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+
+      .tab-status {
+        font-size: 10px;
+        line-height: 1.4;
+      }
+
+      .status-border-idle { border-left-color: #374151; }
+      .status-border-generating { border-left-color: #854d0e; }
+      .status-border-stuck { border-left-color: #b45309; }
+      .status-border-reloading { border-left-color: #1d4ed8; }
+      .status-border-done { border-left-color: #166534; }
+      .status-border-frozen { border-left-color: #5b21b6; }
+      .status-border-error { border-left-color: #991b1b; }
 
       .tab-meta {
         margin-top: 4px;

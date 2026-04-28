@@ -34,6 +34,21 @@ function formatDuration(durationMs) {
   return `${(durationMs / 1000).toFixed(1)}s`;
 }
 
+function formatShortAge(timestamp) {
+  if (!timestamp) {
+    return "never";
+  }
+
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}m ${remainder}s`;
+}
+
 function formatBackendPath(url) {
   if (!url) {
     return "n/a";
@@ -111,13 +126,82 @@ function statusClass(status) {
   return status.toLowerCase();
 }
 
-function tabLine(tab) {
-  const status = displayStatus(tab.state);
-  const duration = formatDuration(tab.state.generationDurationMs);
-  const path = formatChatPath(tab.url);
-  const active = tab.active ? "active" : "background";
+function statusPriority(status) {
+  const priorities = {
+    ERR: 0,
+    FRZ: 1,
+    STUCK: 2,
+    GEN: 3,
+    RLD: 4,
+    DONE: 5,
+    IDLE: 6,
+  };
 
-  return `${status} · ${duration} · ${active} · ${path}`;
+  return priorities[status] ?? 9;
+}
+
+function stateTimestamp(state) {
+  return (
+    state.lastErrorAt ||
+    state.lastStuckAt ||
+    state.lastDoneAt ||
+    state.lastReloadStartedAt ||
+    state.generationStartedAt ||
+    state.lastHeartbeatAt ||
+    0
+  );
+}
+
+function sortedTabs(tabs) {
+  return [...(tabs || [])].sort((left, right) => {
+    if (left.active !== right.active) {
+      return left.active ? -1 : 1;
+    }
+
+    const leftStatus = displayStatus(left.state);
+    const rightStatus = displayStatus(right.state);
+    const priorityDelta = statusPriority(leftStatus) - statusPriority(rightStatus);
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+
+    return stateTimestamp(right.state) - stateTimestamp(left.state);
+  });
+}
+
+function tabActivityLine(tab) {
+  const state = tab.state;
+  const status = displayStatus(state);
+
+  if (status === "GEN" || status === "STUCK") {
+    return `running ${formatDuration(state.generationDurationMs)}`;
+  }
+
+  if (status === "DONE") {
+    return `done ${formatShortAge(state.lastDoneAt)} ago`;
+  }
+
+  if (status === "ERR") {
+    return `error ${formatShortAge(state.lastErrorAt)} ago`;
+  }
+
+  if (status === "RLD") {
+    return `reloading ${formatShortAge(state.lastReloadStartedAt)} ago`;
+  }
+
+  if (status === "FRZ") {
+    return `heartbeat stale ${formatShortAge(state.lastHeartbeatAt)} ago`;
+  }
+
+  return state.lastHeartbeatAt ? `alive ${formatShortAge(state.lastHeartbeatAt)} ago` : "not attached yet";
+}
+
+function tabLine(tab) {
+  const path = formatChatPath(tab.url);
+  const activity = tabActivityLine(tab);
+  const active = tab.active ? "active" : `window ${tab.windowId}`;
+
+  return `${activity} · ${active} · ${path}`;
 }
 
 function formatEventDetail(event) {
@@ -209,14 +293,25 @@ function renderTabs(tabs) {
     return;
   }
 
-  for (const tab of currentTabs) {
+  for (const tab of sortedTabs(currentTabs)) {
+    const status = displayStatus(tab.state);
     const card = document.createElement("div");
-    card.className = `tab-card${tab.active ? " active" : ""}`;
+    card.className = `tab-card status-border-${statusClass(status)}${tab.active ? " active" : ""}`;
+
+    const header = document.createElement("div");
+    header.className = "tab-header";
 
     const title = document.createElement("div");
     title.className = "tab-title";
     title.textContent = tab.title || "ChatGPT";
-    card.appendChild(title);
+    header.appendChild(title);
+
+    const badge = document.createElement("span");
+    badge.className = `tab-status status status-${statusClass(status)}`;
+    badge.textContent = status;
+    header.appendChild(badge);
+
+    card.appendChild(header);
 
     const meta = document.createElement("div");
     meta.className = "tab-meta";
