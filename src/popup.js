@@ -66,6 +66,37 @@ function formatBackendPath(url) {
   }
 }
 
+function eventTypeClass(type) {
+  const normalized = String(type || "EVT").toLowerCase();
+  if (["err", "desync"].includes(normalized)) {
+    return "event-type-error";
+  }
+  if (["frz", "stuck"].includes(normalized)) {
+    return "event-type-warning";
+  }
+  if (["done", "open", "alert"].includes(normalized)) {
+    return "event-type-success";
+  }
+  if (["gen", "rld", "set"].includes(normalized)) {
+    return "event-type-info";
+  }
+  return "event-type-neutral";
+}
+
+function tabLabelForEvent(event) {
+  if (typeof event.tabId !== "number") {
+    return "system";
+  }
+
+  const tab = currentTabs.find((item) => item.id === event.tabId);
+  if (!tab) {
+    return `tab ${event.tabId}`;
+  }
+
+  const prefix = tab.active ? "active" : `tab ${event.tabId}`;
+  return `${prefix} · ${displayStatus(tab.state)}`;
+}
+
 function formatChatPath(url) {
   if (!url) {
     return "n/a";
@@ -211,29 +242,52 @@ function tabLine(tab) {
 
 function formatEventDetail(event) {
   const parts = [];
+  const details = event.details || {};
 
-  if (typeof event.tabId === "number") {
-    parts.push(`tab ${event.tabId}`);
+  parts.push(tabLabelForEvent(event));
+
+  if (details.durationMs !== undefined) {
+    parts.push(`duration ${formatDuration(details.durationMs)}`);
   }
 
-  if (event.details?.durationMs !== undefined) {
-    parts.push(formatDuration(event.details.durationMs));
+  if (details.error) {
+    parts.push(details.error);
   }
 
-  if (event.details?.error) {
-    parts.push(event.details.error);
+  if (details.statusCode) {
+    parts.push(`HTTP ${details.statusCode}`);
   }
 
-  if (event.details?.statusCode) {
-    parts.push(`HTTP ${event.details.statusCode}`);
+  if (details.requestId) {
+    parts.push(`request ${details.requestId}`);
   }
 
-  if (event.details?.url) {
-    parts.push(formatBackendPath(event.details.url));
+  if (details.activeGenerationRequestId) {
+    parts.push(`active ${details.activeGenerationRequestId}`);
   }
 
-  if (event.details?.targetUrl) {
-    parts.push(formatChatPath(event.details.targetUrl));
+  if (details.newTabId !== undefined && details.newTabId !== null) {
+    parts.push(`new tab ${details.newTabId}`);
+  }
+
+  if (details.volume !== undefined) {
+    parts.push(`volume ${details.volume}%`);
+  }
+
+  if (details.source) {
+    parts.push(details.source);
+  }
+
+  if (details.localNetworkState || details.conversationNetworkState) {
+    parts.push(`${details.localNetworkState || "local"} -> ${details.conversationNetworkState || "conversation"}`);
+  }
+
+  if (details.url) {
+    parts.push(formatBackendPath(details.url));
+  }
+
+  if (details.targetUrl) {
+    parts.push(formatChatPath(details.targetUrl));
   }
 
   return parts.join(" · ");
@@ -295,7 +349,7 @@ function renderEvents(events) {
     main.className = "event-main";
 
     const type = document.createElement("span");
-    type.className = "event-type";
+    type.className = `event-type ${eventTypeClass(event.type)}`;
     type.textContent = event.type || "EVT";
     main.appendChild(type);
 
@@ -306,10 +360,14 @@ function renderEvents(events) {
 
     item.appendChild(main);
 
+    const message = document.createElement("div");
+    message.className = "event-message";
+    message.textContent = event.message || "Watchdog event";
+    item.appendChild(message);
+
     const detail = document.createElement("div");
     detail.className = "event-detail";
-    const suffix = formatEventDetail(event);
-    detail.textContent = suffix ? `${event.message} · ${suffix}` : event.message;
+    detail.textContent = formatEventDetail(event);
     item.appendChild(detail);
 
     eventListEl.appendChild(item);

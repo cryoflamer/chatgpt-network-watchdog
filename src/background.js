@@ -5,7 +5,7 @@ const DONE_RESET_MS = 120000;
 const AUTO_RECOVER_DEBOUNCE_MS = 60000;
 const RELOAD_MIN_DISPLAY_MS = 3000;
 const STUCK_GENERATION_TIMEOUT_MS = 90000;
-const MAX_EVENT_LOG_ITEMS = 20;
+const MAX_EVENT_LOG_ITEMS = 30;
 const SOUND_ALERT_DEBOUNCE_MS = 3000;
 const DEFAULT_SOUND_VOLUME = 0.35;
 const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
@@ -78,7 +78,7 @@ function addEvent(type, tabId, message, details = {}) {
   }
 }
 
-function recentEvents(limit = 10) {
+function recentEvents(limit = 30) {
   return eventLog.slice(0, limit).map((event) => ({
     ...event,
     details: { ...event.details },
