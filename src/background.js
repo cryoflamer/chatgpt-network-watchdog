@@ -34,6 +34,7 @@ const settings = {
 };
 let lastSoundAlertAt = 0;
 let lastNotificationAt = 0;
+const notificationTargets = new Map();
 
 console.log("[CTR:BG] service worker loaded", {
   href: chrome.runtime.getURL("src/background.js"),
@@ -160,32 +161,78 @@ function triggerSoundAlert(state, alertType) {
   );
 }
 
-function notificationText(alertType, state, details = {}) {
+function compactChatTitle(title) {
+  const normalized = String(title || "ChatGPT").replace(/\s*[|—-]\s*ChatGPT\s*$/i, "").trim();
+  return normalized || "ChatGPT chat";
+}
+
+function notificationText(alertType, state, details = {}, tab = null) {
+  const chatTitle = compactChatTitle(details.chatTitle || tab?.title);
+  const title = `ChatGPT: ${chatTitle}`;
+
   if (alertType === "DONE") {
     return {
-      title: "ChatGPT response completed",
-      message: `Done after ${((details.durationMs ?? generationDurationMs(state) ?? 0) / 1000).toFixed(1)}s`,
+      title,
+      message: `Response ready after ${((details.durationMs ?? generationDurationMs(state) ?? 0) / 1000).toFixed(1)}s`,
     };
   }
 
   if (alertType === "ERR") {
     return {
-      title: "ChatGPT network error",
+      title,
       message: state.lastError || details.error || "Generation failed",
     };
   }
 
   if (alertType === "FRZ") {
     return {
-      title: "ChatGPT tab may be frozen",
-      message: "Response is done, but the page heartbeat is stale.",
+      title,
+      message: "Response is ready, but the tab heartbeat is stale.",
     };
   }
 
   return {
-    title: "ChatGPT Network Watchdog",
+    title,
     message: alertType,
   };
+}
+
+function createDesktopNotification(state, alertType, details, tab) {
+  const currentTime = now();
+  const text = notificationText(alertType, state, details, tab);
+  const notificationId = `cnw-${state.tabId}-${alertType.toLowerCase()}-${currentTime}`;
+
+  notificationTargets.set(notificationId, {
+    tabId: state.tabId,
+    windowId: tab?.windowId ?? null,
+    url: tab?.url || details.url || null,
+    alertType,
+    createdAt: currentTime,
+  });
+
+  chrome.notifications.create(
+    notificationId,
+    {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icons/icon128.png"),
+      title: text.title,
+      message: text.message,
+      priority: alertType === "ERR" || alertType === "FRZ" ? 1 : 0,
+    },
+    () => {
+      if (chrome.runtime.lastError) {
+        notificationTargets.delete(notificationId);
+        addEvent("ERR", state.tabId, "Desktop notification failed", { error: chrome.runtime.lastError.message });
+        return;
+      }
+
+      addEvent("ALERT", state.tabId, `Desktop notification sent: ${alertType}`, {
+        notificationId,
+        title: text.title,
+        chatTitle: compactChatTitle(tab?.title),
+      });
+    },
+  );
 }
 
 function triggerDesktopNotification(state, alertType, details = {}) {
@@ -199,31 +246,53 @@ function triggerDesktopNotification(state, alertType, details = {}) {
   }
   lastNotificationAt = currentTime;
 
-  const text = notificationText(alertType, state, details);
-  const notificationId = `cnw-${state.tabId}-${alertType.toLowerCase()}-${currentTime}`;
+  chrome.tabs.get(state.tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab?.id) {
+      createDesktopNotification(state, alertType, details, null);
+      return;
+    }
 
-  chrome.notifications.create(
-    notificationId,
-    {
-      type: "basic",
-      iconUrl: chrome.runtime.getURL("icons/icon128.png"),
-      title: text.title,
-      message: text.message,
-      priority: alertType === "ERR" || alertType === "FRZ" ? 1 : 0,
-    },
-    () => {
-      if (chrome.runtime.lastError) {
-        addEvent("ERR", state.tabId, "Desktop notification failed", { error: chrome.runtime.lastError.message });
-        return;
-      }
-
-      addEvent("ALERT", state.tabId, `Desktop notification sent: ${alertType}`, {
-        notificationId,
-        title: text.title,
-      });
-    },
-  );
+    createDesktopNotification(state, alertType, details, tab);
+  });
 }
+
+chrome.notifications.onClicked.addListener((notificationId) => {
+  const target = notificationTargets.get(notificationId);
+  if (!target?.tabId) {
+    return;
+  }
+
+  chrome.tabs.update(target.tabId, { active: true }, (tab) => {
+    if (chrome.runtime.lastError || !tab?.id) {
+      addEvent("ERR", target.tabId, "Notification click failed", {
+        notificationId,
+        error: chrome.runtime.lastError?.message || "tab not found",
+      });
+      notificationTargets.delete(notificationId);
+      return;
+    }
+
+    const windowId = tab.windowId ?? target.windowId;
+    if (typeof windowId === "number") {
+      chrome.windows.update(windowId, { focused: true }, () => {
+        void chrome.runtime.lastError;
+      });
+    }
+
+    addEvent("OPEN", target.tabId, "Notification clicked; tab focused", {
+      notificationId,
+      alertType: target.alertType,
+    });
+    notificationTargets.delete(notificationId);
+    chrome.notifications.clear(notificationId, () => {
+      void chrome.runtime.lastError;
+    });
+  });
+});
+
+chrome.notifications.onClosed.addListener((notificationId) => {
+  notificationTargets.delete(notificationId);
+});
 
 function triggerAlerts(state, alertType, details = {}) {
   triggerSoundAlert(state, alertType);

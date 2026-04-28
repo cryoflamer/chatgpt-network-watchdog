@@ -112,7 +112,7 @@ Desktop notifications are off by default and can be enabled from the popup indep
 - `ERR`: network error
 - `FRZ`: response done but page heartbeat stale
 
-Notifications are debounced so state churn cannot spam the system notification tray. The popup includes test buttons for DONE, ERR, and FRZ notifications.
+Notifications are debounced so state churn cannot spam the system notification tray. Notification titles include the ChatGPT tab title when available, and clicking a notification focuses the related ChatGPT tab and browser window. The popup includes test buttons for DONE, ERR, and FRZ notifications.
 
 ## Event log
 
