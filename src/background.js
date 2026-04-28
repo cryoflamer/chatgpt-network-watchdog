@@ -159,7 +159,7 @@ function triggerDesktopNotification(state, alertType, details = {}) {
     notificationId,
     {
       type: "basic",
-      iconUrl: "icons/icon128.png",
+      iconUrl: chrome.runtime.getURL("icons/icon128.png"),
       title: text.title,
       message: text.message,
       priority: alertType === "ERR" || alertType === "FRZ" ? 1 : 0,
