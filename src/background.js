@@ -23,6 +23,7 @@ import { createWatchdogController } from "./background/watchdog.js";
 import { createBadgeController } from "./background/badge.js";
 import { createRuntimeRouter } from "./background/runtime.js";
 import { createCommandController } from "./background/commands.js";
+import { createTabLifecycleController } from "./background/tab-lifecycle.js";
 import {
   conversationIdFromUrl,
   isChatGptBackendRequest,
@@ -627,37 +628,15 @@ const commandController = createCommandController({
 });
 commandController.attach();
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  const url = tab?.url || changeInfo.url || "";
-  if (!url.startsWith("https://chatgpt.com/")) {
-    return;
-  }
-
-  const state = getTabState(tabId);
-
-  if (changeInfo.status === "loading") {
-    if (state.networkState !== "generating") {
-      markTabReloading(state, "tab started loading");
-    }
-    return;
-  }
-
-  if (changeInfo.status === "complete") {
-    if (state.networkState === "reloading" || state.pageState === "reloading") {
-      completeTabReload(state);
-    }
-  }
+const tabLifecycle = createTabLifecycleController({
+  chromeApi: chrome,
+  tabs,
+  requests,
+  getTabState,
+  markTabReloading,
+  completeTabReload,
 });
-
-chrome.tabs.onRemoved.addListener((tabId) => {
-  tabs.delete(tabId);
-
-  for (const [requestId, request] of requests.entries()) {
-    if (request.tabId === tabId) {
-      requests.delete(requestId);
-    }
-  }
-});
+tabLifecycle.attach();
 
 const watchdog = createWatchdogController({
   now,
