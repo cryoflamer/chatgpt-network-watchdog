@@ -22,6 +22,7 @@ import { createRecoveryController } from "./background/recovery.js";
 import { createWatchdogController } from "./background/watchdog.js";
 import { createBadgeController } from "./background/badge.js";
 import { createRuntimeRouter } from "./background/runtime.js";
+import { createCommandController } from "./background/commands.js";
 import {
   conversationIdFromUrl,
   isChatGptBackendRequest,
@@ -620,25 +621,11 @@ const runtime = createRuntimeRouter({
 runtime.attach();
 
 
-function isOpenFreshChatCommand(command) {
-  return command === "open-fresh-chat" || command === "open_fresh_chat";
-}
-
-chrome.commands.onCommand.addListener((command) => {
-  console.log("[CTR:BG] command received", { command });
-
-  if (!isOpenFreshChatCommand(command)) {
-    return;
-  }
-
-  console.log("[CTR:BG] opening fresh ChatGPT tab from hotkey", { command });
-
-  openFreshChatForCurrentWindow((response) => {
-    if (!response?.ok) {
-      console.warn("[CTR:BG] hotkey open fresh chat failed", response);
-    }
-  });
+const commandController = createCommandController({
+  chromeApi: chrome,
+  openFreshChatForCurrentWindow,
 });
+commandController.attach();
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   const url = tab?.url || changeInfo.url || "";
