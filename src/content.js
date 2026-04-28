@@ -27,7 +27,7 @@ function unlockWatchdogAudio() {
   });
 }
 
-function playTone(frequency, durationMs, delayMs = 0) {
+function playTone(frequency, durationMs, delayMs = 0, volume = 0.35) {
   const ctx = getAudioContext();
   if (!ctx) {
     return;
@@ -38,10 +38,13 @@ function playTone(frequency, durationMs, delayMs = 0) {
     const oscillator = ctx.createOscillator();
     const gain = ctx.createGain();
 
+    const safeVolume = Math.min(1, Math.max(0, Number(volume) || 0));
+    const peakGain = Math.max(0.0001, safeVolume * 0.18);
+
     oscillator.type = "sine";
     oscillator.frequency.value = frequency;
     gain.gain.setValueAtTime(0.0001, startAt);
-    gain.gain.exponentialRampToValueAtTime(0.035, startAt + 0.015);
+    gain.gain.exponentialRampToValueAtTime(peakGain, startAt + 0.015);
     gain.gain.exponentialRampToValueAtTime(0.0001, startAt + durationMs / 1000);
 
     oscillator.connect(gain);
@@ -53,14 +56,14 @@ function playTone(frequency, durationMs, delayMs = 0) {
   });
 }
 
-function playWatchdogSound(alertType) {
+function playWatchdogSound(alertType, volume = 0.35) {
   if (alertType === "DONE") {
-    playTone(880, 100);
+    playTone(880, 100, 0, volume);
   } else if (alertType === "ERR") {
-    playTone(220, 160);
+    playTone(220, 160, 0, volume);
   } else if (alertType === "FRZ") {
-    playTone(660, 80);
-    playTone(660, 80, 140);
+    playTone(660, 80, 0, volume);
+    playTone(660, 80, 140, volume);
   }
 }
 
@@ -81,7 +84,7 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message?.type === "watchdog-play-sound") {
-    playWatchdogSound(message.alertType);
+    playWatchdogSound(message.alertType, message.volume);
   }
 });
 

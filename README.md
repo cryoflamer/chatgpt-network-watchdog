@@ -92,7 +92,7 @@ Sound alerts are off by default and can be enabled from the popup. When enabled,
 - `ERR`: short low bump
 - `FRZ`: double tick
 
-Alerts are debounced so state churn cannot create repeated sounds. Audio is optional and may require a user gesture in the ChatGPT tab before the browser allows playback.
+Alerts are debounced so state churn cannot create repeated sounds. The popup includes a volume slider and test buttons for DONE, ERR, and FRZ cues. Audio is optional and may require a user gesture in the ChatGPT tab before the browser allows playback.
 
 ## Event log
 

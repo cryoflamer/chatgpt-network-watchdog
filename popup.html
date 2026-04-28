@@ -88,6 +88,32 @@
         margin: 0;
       }
 
+      .volume-row {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 8px;
+        align-items: center;
+        margin-top: 8px;
+        color: #d1d5db;
+        font-size: 12px;
+      }
+
+      .volume-row input {
+        width: 100%;
+      }
+
+      .test-sounds {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .test-sounds button {
+        padding: 6px 8px;
+        font-size: 12px;
+      }
+
       .hint {
         margin-top: 10px;
         color: #9ca3af;
@@ -240,6 +266,16 @@
       <input id="soundAlerts" type="checkbox">
       Sound alerts
     </label>
+    <div class="volume-row">
+      <label for="soundVolume">Volume</label>
+      <input id="soundVolume" type="range" min="0" max="100" step="5" value="35">
+      <span id="soundVolumeValue">35%</span>
+    </div>
+    <div class="test-sounds">
+      <button id="testDoneSound" class="secondary" type="button">Test DONE</button>
+      <button id="testErrSound" class="secondary" type="button">Test ERR</button>
+      <button id="testFrzSound" class="secondary" type="button">Test FRZ</button>
+    </div>
     <div id="hint" class="hint">State is tracked by the background service worker. Hotkey: Alt+Shift+N opens the current chat in a fresh tab.</div>
     <section class="tabs">
       <h2>ChatGPT tabs</h2>

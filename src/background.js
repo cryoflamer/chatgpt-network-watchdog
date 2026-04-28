@@ -7,6 +7,7 @@ const RELOAD_MIN_DISPLAY_MS = 3000;
 const STUCK_GENERATION_TIMEOUT_MS = 90000;
 const MAX_EVENT_LOG_ITEMS = 20;
 const SOUND_ALERT_DEBOUNCE_MS = 3000;
+const DEFAULT_SOUND_VOLUME = 0.35;
 const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
 const DIAGNOSTIC_LOG = false;
 
@@ -18,6 +19,7 @@ let nextEventId = 1;
 const settings = {
   autoRecoverFrozenTabs: false,
   soundAlerts: false,
+  soundVolume: DEFAULT_SOUND_VOLUME,
 };
 let lastSoundAlertAt = 0;
 
@@ -25,11 +27,15 @@ console.log("[CTR:BG] service worker loaded", {
   href: chrome.runtime.getURL("src/background.js"),
 });
 
-chrome.storage.local.get({ autoRecoverFrozenTabs: false, soundAlerts: false }, (stored) => {
-  settings.autoRecoverFrozenTabs = Boolean(stored.autoRecoverFrozenTabs);
-  settings.soundAlerts = Boolean(stored.soundAlerts);
-  console.log("[CTR:BG] settings loaded", settings);
-});
+chrome.storage.local.get(
+  { autoRecoverFrozenTabs: false, soundAlerts: false, soundVolume: DEFAULT_SOUND_VOLUME },
+  (stored) => {
+    settings.autoRecoverFrozenTabs = Boolean(stored.autoRecoverFrozenTabs);
+    settings.soundAlerts = Boolean(stored.soundAlerts);
+    settings.soundVolume = clampSoundVolume(stored.soundVolume);
+    console.log("[CTR:BG] settings loaded", settings);
+  },
+);
 
 function now() {
   return Date.now();
@@ -41,6 +47,19 @@ function debugLog(message, payload = {}) {
   }
 
   console.log(`[CTR:BG] ${message}`, payload);
+}
+
+function clampSoundVolume(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_SOUND_VOLUME;
+  }
+
+  return Math.min(1, Math.max(0, parsed));
+}
+
+function soundVolumePercent() {
+  return Math.round(settings.soundVolume * 100);
 }
 
 function addEvent(type, tabId, message, details = {}) {
@@ -77,10 +96,10 @@ function triggerSoundAlert(state, alertType) {
   }
   lastSoundAlertAt = currentTime;
 
-  addEvent("ALERT", state.tabId, `Sound alert requested: ${alertType}`);
+  addEvent("ALERT", state.tabId, `Sound alert requested: ${alertType}`, { volume: soundVolumePercent() });
   chrome.tabs.sendMessage(
     state.tabId,
-    { type: "watchdog-play-sound", alertType },
+    { type: "watchdog-play-sound", alertType, volume: settings.soundVolume },
     () => {
       void chrome.runtime.lastError;
     },
@@ -298,7 +317,7 @@ function publicState(state) {
     lastAutoRecoverAt: state.lastAutoRecoverAt,
     lastReloadStartedAt: state.lastReloadStartedAt,
     lastReloadCompletedAt: state.lastReloadCompletedAt,
-    settings: { ...settings },
+    settings: { ...settings, soundVolumePercent: soundVolumePercent() },
   };
 }
 
@@ -845,7 +864,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
           ok: true,
           state: state ? publicState(state) : null,
-          settings: { ...settings },
+          settings: { ...settings, soundVolumePercent: soundVolumePercent() },
         });
       });
     });
@@ -872,9 +891,71 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
           ok: true,
           state: state ? publicState(state) : null,
-          settings: { ...settings },
+          settings: { ...settings, soundVolumePercent: soundVolumePercent() },
         });
       });
+    });
+    return true;
+  }
+
+  if (message?.type === "watchdog-popup-set-sound-volume") {
+    settings.soundVolume = clampSoundVolume(message.volume);
+    chrome.storage.local.set({ soundVolume: settings.soundVolume }, () => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+
+      getActiveChatGptTab((tab) => {
+        const state = tab?.id ? getTabState(tab.id) : null;
+        if (state) {
+          state.lastActionAt = now();
+          state.lastAction = `sound volume set to ${soundVolumePercent()}%`;
+          addEvent("SET", state.tabId, state.lastAction);
+          notifyTab(state);
+        }
+
+        sendResponse({
+          ok: true,
+          state: state ? publicState(state) : null,
+          settings: { ...settings, soundVolumePercent: soundVolumePercent() },
+        });
+      });
+    });
+    return true;
+  }
+
+  if (message?.type === "watchdog-popup-test-sound") {
+    const alertType = typeof message.alertType === "string" ? message.alertType.toUpperCase() : "DONE";
+    if (!["DONE", "ERR", "FRZ"].includes(alertType)) {
+      sendResponse({ ok: false, error: "Unsupported alert type" });
+      return false;
+    }
+
+    getActiveChatGptTab((tab) => {
+      if (!tab?.id) {
+        sendResponse({ ok: false, error: "No ChatGPT tab found" });
+        return;
+      }
+
+      const state = getTabState(tab.id);
+      addEvent("ALERT", state.tabId, `Test sound requested: ${alertType}`, { volume: soundVolumePercent() });
+      chrome.tabs.sendMessage(
+        state.tabId,
+        { type: "watchdog-play-sound", alertType, volume: settings.soundVolume },
+        () => {
+          if (chrome.runtime.lastError) {
+            sendResponse({ ok: false, error: chrome.runtime.lastError.message, state: publicState(state) });
+            return;
+          }
+
+          sendResponse({
+            ok: true,
+            state: publicState(state),
+            settings: { ...settings, soundVolumePercent: soundVolumePercent() },
+          });
+        },
+      );
     });
     return true;
   }

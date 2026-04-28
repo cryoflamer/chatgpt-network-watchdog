@@ -12,6 +12,11 @@ const openFreshChatButton = document.getElementById("openFreshChat");
 const reloadTabButton = document.getElementById("reloadTab");
 const autoRecoverFrozenTabsInput = document.getElementById("autoRecoverFrozenTabs");
 const soundAlertsInput = document.getElementById("soundAlerts");
+const soundVolumeInput = document.getElementById("soundVolume");
+const soundVolumeValueEl = document.getElementById("soundVolumeValue");
+const testDoneSoundButton = document.getElementById("testDoneSound");
+const testErrSoundButton = document.getElementById("testErrSound");
+const testFrzSoundButton = document.getElementById("testFrzSound");
 
 let currentState = null;
 let currentTabs = [];
@@ -246,6 +251,33 @@ function sendPopupMessage(message, callback) {
   });
 }
 
+function setSoundVolumeUi(percent) {
+  const normalized = Math.min(100, Math.max(0, Number(percent) || 0));
+  soundVolumeInput.value = String(normalized);
+  soundVolumeValueEl.textContent = `${normalized}%`;
+}
+
+function setTestSoundButtonsDisabled(disabled) {
+  testDoneSoundButton.disabled = disabled;
+  testErrSoundButton.disabled = disabled;
+  testFrzSoundButton.disabled = disabled;
+}
+
+function requestTestSound(alertType) {
+  setTestSoundButtonsDisabled(true);
+  sendPopupMessage({ type: "watchdog-popup-test-sound", alertType }, (response) => {
+    setTestSoundButtonsDisabled(false);
+
+    if (!response?.ok) {
+      hintEl.textContent = response?.error || "Unable to test " + alertType + " sound.";
+      return;
+    }
+
+    hintEl.textContent = alertType + " sound tested at " + soundVolumeInput.value + "%.";
+    requestState();
+  });
+}
+
 function renderEvents(events) {
   currentEvents = events || [];
   eventListEl.replaceChildren();
@@ -388,6 +420,7 @@ function renderState(state, tabs = currentTabs, events = currentEvents) {
   reloadTabButton.disabled = state.networkState !== "error";
   autoRecoverFrozenTabsInput.checked = Boolean(state.settings?.autoRecoverFrozenTabs);
   soundAlertsInput.checked = Boolean(state.settings?.soundAlerts);
+  setSoundVolumeUi(state.settings?.soundVolumePercent ?? Math.round((state.settings?.soundVolume ?? 0.35) * 100));
   renderTabs(tabs);
   renderEvents(events);
 
@@ -520,6 +553,44 @@ soundAlertsInput.addEventListener("change", () => {
     },
   );
 });
+
+
+soundVolumeInput.addEventListener("input", () => {
+  setSoundVolumeUi(soundVolumeInput.value);
+});
+
+soundVolumeInput.addEventListener("change", () => {
+  soundVolumeInput.disabled = true;
+  const volume = Math.min(100, Math.max(0, Number(soundVolumeInput.value) || 0)) / 100;
+
+  sendPopupMessage(
+    {
+      type: "watchdog-popup-set-sound-volume",
+      volume,
+    },
+    (response) => {
+      soundVolumeInput.disabled = false;
+
+      if (!response?.ok) {
+        hintEl.textContent = response?.error || "Unable to update sound volume.";
+        setSoundVolumeUi(currentState?.settings?.soundVolumePercent ?? 35);
+        return;
+      }
+
+      if (response.state) {
+        renderState(response.state);
+      } else if (currentState) {
+        currentState.settings = response.settings || currentState.settings;
+        renderState(currentState);
+      }
+      requestState();
+    },
+  );
+});
+
+testDoneSoundButton.addEventListener("click", () => requestTestSound("DONE"));
+testErrSoundButton.addEventListener("click", () => requestTestSound("ERR"));
+testFrzSoundButton.addEventListener("click", () => requestTestSound("FRZ"));
 
 requestState();
 setInterval(requestState, 1000);
