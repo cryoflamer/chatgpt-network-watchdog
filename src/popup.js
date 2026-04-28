@@ -16,6 +16,10 @@ const soundAlertsInput = document.getElementById("soundAlerts");
 const desktopNotificationsInput = document.getElementById("desktopNotifications");
 const soundVolumeInput = document.getElementById("soundVolume");
 const soundVolumeValueEl = document.getElementById("soundVolumeValue");
+const heartbeatTimeoutInput = document.getElementById("heartbeatTimeout");
+const heartbeatTimeoutValueEl = document.getElementById("heartbeatTimeoutValue");
+const autoRecoverCooldownInput = document.getElementById("autoRecoverCooldown");
+const autoRecoverCooldownValueEl = document.getElementById("autoRecoverCooldownValue");
 const testDoneSoundButton = document.getElementById("testDoneSound");
 const testErrSoundButton = document.getElementById("testErrSound");
 const testFrzSoundButton = document.getElementById("testFrzSound");
@@ -383,6 +387,12 @@ function setSoundVolumeUi(percent) {
   soundVolumeInput.value = String(normalized);
   soundVolumeValueEl.textContent = `${normalized}%`;
 }
+function setRangeSecondsUi(input, valueEl, seconds, suffix = "s") {
+  const normalized = Math.max(Number(input.min) || 0, Math.min(Number(input.max) || seconds, Number(seconds) || 0));
+  input.value = String(normalized);
+  valueEl.textContent = `${normalized}${suffix}`;
+}
+
 
 function setTestSoundButtonsDisabled(disabled) {
   testDoneSoundButton.disabled = disabled;
@@ -575,6 +585,8 @@ function renderState(state, tabs = currentTabs, events = currentEvents) {
   soundAlertsInput.checked = Boolean(state.settings?.soundAlerts);
   desktopNotificationsInput.checked = Boolean(state.settings?.desktopNotifications);
   setSoundVolumeUi(state.settings?.soundVolumePercent ?? Math.round((state.settings?.soundVolume ?? 0.35) * 100));
+  setRangeSecondsUi(heartbeatTimeoutInput, heartbeatTimeoutValueEl, state.settings?.heartbeatTimeoutSec ?? 15);
+  setRangeSecondsUi(autoRecoverCooldownInput, autoRecoverCooldownValueEl, state.settings?.autoRecoverCooldownSec ?? 60);
   renderTabs(tabs);
   renderEvents(events);
 
@@ -762,6 +774,76 @@ soundVolumeInput.addEventListener("change", () => {
       if (!response?.ok) {
         hintEl.textContent = response?.error || "Unable to update sound volume.";
         setSoundVolumeUi(currentState?.settings?.soundVolumePercent ?? 35);
+        return;
+      }
+
+      if (response.state) {
+        renderState(response.state);
+      } else if (currentState) {
+        currentState.settings = response.settings || currentState.settings;
+        renderState(currentState);
+      }
+      requestState();
+    },
+  );
+});
+
+heartbeatTimeoutInput.addEventListener("input", () => {
+  setRangeSecondsUi(heartbeatTimeoutInput, heartbeatTimeoutValueEl, heartbeatTimeoutInput.value);
+});
+
+heartbeatTimeoutInput.addEventListener("change", () => {
+  heartbeatTimeoutInput.disabled = true;
+  const seconds = Math.max(5, Math.min(60, Number(heartbeatTimeoutInput.value) || 15));
+
+  sendPopupMessage(
+    {
+      type: "watchdog-popup-set-heartbeat-timeout",
+      seconds,
+    },
+    (response) => {
+      heartbeatTimeoutInput.disabled = false;
+
+      if (!response?.ok) {
+        hintEl.textContent = response?.error || "Unable to update heartbeat timeout.";
+        setRangeSecondsUi(heartbeatTimeoutInput, heartbeatTimeoutValueEl, currentState?.settings?.heartbeatTimeoutSec ?? 15);
+        return;
+      }
+
+      if (response.state) {
+        renderState(response.state);
+      } else if (currentState) {
+        currentState.settings = response.settings || currentState.settings;
+        renderState(currentState);
+      }
+      requestState();
+    },
+  );
+});
+
+autoRecoverCooldownInput.addEventListener("input", () => {
+  setRangeSecondsUi(autoRecoverCooldownInput, autoRecoverCooldownValueEl, autoRecoverCooldownInput.value);
+});
+
+autoRecoverCooldownInput.addEventListener("change", () => {
+  autoRecoverCooldownInput.disabled = true;
+  const seconds = Math.max(10, Math.min(300, Number(autoRecoverCooldownInput.value) || 60));
+
+  sendPopupMessage(
+    {
+      type: "watchdog-popup-set-auto-recover-cooldown",
+      seconds,
+    },
+    (response) => {
+      autoRecoverCooldownInput.disabled = false;
+
+      if (!response?.ok) {
+        hintEl.textContent = response?.error || "Unable to update auto-recovery cooldown.";
+        setRangeSecondsUi(
+          autoRecoverCooldownInput,
+          autoRecoverCooldownValueEl,
+          currentState?.settings?.autoRecoverCooldownSec ?? 60,
+        );
         return;
       }
 

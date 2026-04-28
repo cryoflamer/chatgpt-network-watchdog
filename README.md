@@ -67,9 +67,18 @@ Page: frozen
 
 Planned follow-up patches:
 
-1. Add settings for heartbeat and auto-recovery timeouts.
-2. Add defensive handling for regenerated responses.
-3. Add import/export for watchdog settings.
+1. Add defensive handling for regenerated responses.
+2. Add import/export for watchdog settings.
+
+## Runtime settings
+
+The popup exposes lightweight runtime settings stored in `chrome.storage.local`:
+
+- heartbeat timeout: how long a ChatGPT tab can stop sending content-script heartbeat messages before it becomes `FRZ` or `STALE`;
+- auto-recovery cooldown: the minimum delay between automatic fresh-tab recovery attempts for a frozen tab;
+- sound volume, sound alerts, desktop notifications, and auto-recovery toggles.
+
+These settings make the watchdog easier to tune for slow machines, suspended background tabs, or more aggressive recovery preferences.
 
 ## Multi-tab view
 

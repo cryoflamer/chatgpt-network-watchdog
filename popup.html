@@ -111,6 +111,7 @@
         margin: 0;
       }
 
+      .range-row,
       .volume-row {
         display: grid;
         grid-template-columns: auto 1fr auto;
@@ -121,6 +122,7 @@
         font-size: 12px;
       }
 
+      .range-row input,
       .volume-row input {
         width: 100%;
       }
@@ -318,6 +320,16 @@
       <input id="desktopNotifications" type="checkbox">
       Desktop notifications
     </label>
+    <div class="range-row">
+      <label for="heartbeatTimeout">Heartbeat timeout</label>
+      <input id="heartbeatTimeout" type="range" min="5" max="60" step="5" value="15">
+      <span id="heartbeatTimeoutValue">15s</span>
+    </div>
+    <div class="range-row">
+      <label for="autoRecoverCooldown">Auto-recover cooldown</label>
+      <input id="autoRecoverCooldown" type="range" min="10" max="300" step="10" value="60">
+      <span id="autoRecoverCooldownValue">60s</span>
+    </div>
     <div class="volume-row">
       <label for="soundVolume">Volume</label>
       <input id="soundVolume" type="range" min="0" max="100" step="5" value="35">

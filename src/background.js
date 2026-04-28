@@ -1,8 +1,8 @@
 const GENERATION_PATH = "/backend-api/f/conversation";
-const HEARTBEAT_TIMEOUT_MS = 15000;
+const DEFAULT_HEARTBEAT_TIMEOUT_MS = 15000;
 const WATCH_INTERVAL_MS = 3000;
 const DONE_RESET_MS = 120000;
-const AUTO_RECOVER_DEBOUNCE_MS = 60000;
+const DEFAULT_AUTO_RECOVER_COOLDOWN_MS = 60000;
 const AUTO_RECOVER_MAX_ATTEMPTS = 2;
 const AUTO_RECOVER_RETRY_BASE_DELAY_MS = 30000;
 const RELOAD_MIN_DISPLAY_MS = 3000;
@@ -12,6 +12,10 @@ const MAX_EVENT_LOG_ITEMS = 30;
 const SOUND_ALERT_DEBOUNCE_MS = 3000;
 const NOTIFICATION_DEBOUNCE_MS = 3000;
 const DEFAULT_SOUND_VOLUME = 0.35;
+const MIN_HEARTBEAT_TIMEOUT_MS = 5000;
+const MAX_HEARTBEAT_TIMEOUT_MS = 60000;
+const MIN_AUTO_RECOVER_COOLDOWN_MS = 10000;
+const MAX_AUTO_RECOVER_COOLDOWN_MS = 300000;
 const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
 const DIAGNOSTIC_LOG = false;
 
@@ -25,6 +29,8 @@ const settings = {
   soundAlerts: false,
   desktopNotifications: false,
   soundVolume: DEFAULT_SOUND_VOLUME,
+  heartbeatTimeoutMs: DEFAULT_HEARTBEAT_TIMEOUT_MS,
+  autoRecoverCooldownMs: DEFAULT_AUTO_RECOVER_COOLDOWN_MS,
 };
 let lastSoundAlertAt = 0;
 let lastNotificationAt = 0;
@@ -34,12 +40,31 @@ console.log("[CTR:BG] service worker loaded", {
 });
 
 chrome.storage.local.get(
-  { autoRecoverFrozenTabs: false, soundAlerts: false, desktopNotifications: false, soundVolume: DEFAULT_SOUND_VOLUME },
+  {
+    autoRecoverFrozenTabs: false,
+    soundAlerts: false,
+    desktopNotifications: false,
+    soundVolume: DEFAULT_SOUND_VOLUME,
+    heartbeatTimeoutMs: DEFAULT_HEARTBEAT_TIMEOUT_MS,
+    autoRecoverCooldownMs: DEFAULT_AUTO_RECOVER_COOLDOWN_MS,
+  },
   (stored) => {
     settings.autoRecoverFrozenTabs = Boolean(stored.autoRecoverFrozenTabs);
     settings.soundAlerts = Boolean(stored.soundAlerts);
     settings.desktopNotifications = Boolean(stored.desktopNotifications);
     settings.soundVolume = clampSoundVolume(stored.soundVolume);
+    settings.heartbeatTimeoutMs = clampMs(
+      stored.heartbeatTimeoutMs,
+      MIN_HEARTBEAT_TIMEOUT_MS,
+      MAX_HEARTBEAT_TIMEOUT_MS,
+      DEFAULT_HEARTBEAT_TIMEOUT_MS,
+    );
+    settings.autoRecoverCooldownMs = clampMs(
+      stored.autoRecoverCooldownMs,
+      MIN_AUTO_RECOVER_COOLDOWN_MS,
+      MAX_AUTO_RECOVER_COOLDOWN_MS,
+      DEFAULT_AUTO_RECOVER_COOLDOWN_MS,
+    );
     console.log("[CTR:BG] settings loaded", settings);
   },
 );
@@ -64,6 +89,28 @@ function clampSoundVolume(value) {
 
   return Math.min(1, Math.max(0, parsed));
 }
+function clampMs(value, min, max, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
+function secondsFromMs(value) {
+  return Math.round(value / 1000);
+}
+
+function publicSettings() {
+  return {
+    ...settings,
+    soundVolumePercent: soundVolumePercent(),
+    heartbeatTimeoutSec: secondsFromMs(settings.heartbeatTimeoutMs),
+    autoRecoverCooldownSec: secondsFromMs(settings.autoRecoverCooldownMs),
+  };
+}
+
 
 function soundVolumePercent() {
   return Math.round(settings.soundVolume * 100);
@@ -426,7 +473,7 @@ function publicState(state) {
     autoRecoverGaveUpAt: state.autoRecoverGaveUpAt || null,
     lastReloadStartedAt: state.lastReloadStartedAt,
     lastReloadCompletedAt: state.lastReloadCompletedAt,
-    settings: { ...settings, soundVolumePercent: soundVolumePercent() },
+    settings: publicSettings(),
   };
 }
 
@@ -717,7 +764,7 @@ function nextAutoRecoverDelayMs(state) {
     return 0;
   }
 
-  return Math.max(AUTO_RECOVER_DEBOUNCE_MS, AUTO_RECOVER_RETRY_BASE_DELAY_MS * (2 ** (attempts - 1)));
+  return Math.max(settings.autoRecoverCooldownMs, AUTO_RECOVER_RETRY_BASE_DELAY_MS * (2 ** (attempts - 1)));
 }
 
 function autoRecoverFrozenTab(state) {
@@ -1071,7 +1118,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
           ok: true,
           state: state ? publicState(state) : null,
-          settings: { ...settings, soundVolumePercent: soundVolumePercent() },
+          settings: publicSettings(),
         });
       });
     });
@@ -1098,7 +1145,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
           ok: true,
           state: state ? publicState(state) : null,
-          settings: { ...settings, soundVolumePercent: soundVolumePercent() },
+          settings: publicSettings(),
         });
       });
     });
@@ -1127,7 +1174,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
           ok: true,
           state: state ? publicState(state) : null,
-          settings: { ...settings, soundVolumePercent: soundVolumePercent() },
+          settings: publicSettings(),
         });
       });
     });
@@ -1154,7 +1201,71 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
           ok: true,
           state: state ? publicState(state) : null,
-          settings: { ...settings, soundVolumePercent: soundVolumePercent() },
+          settings: publicSettings(),
+        });
+      });
+    });
+    return true;
+  }
+
+  if (message?.type === "watchdog-popup-set-heartbeat-timeout") {
+    settings.heartbeatTimeoutMs = clampMs(
+      Number(message.seconds) * 1000,
+      MIN_HEARTBEAT_TIMEOUT_MS,
+      MAX_HEARTBEAT_TIMEOUT_MS,
+      DEFAULT_HEARTBEAT_TIMEOUT_MS,
+    );
+    chrome.storage.local.set({ heartbeatTimeoutMs: settings.heartbeatTimeoutMs }, () => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+
+      getActiveChatGptTab((tab) => {
+        const state = tab?.id ? getTabState(tab.id) : null;
+        if (state) {
+          state.lastActionAt = now();
+          state.lastAction = `heartbeat timeout set to ${secondsFromMs(settings.heartbeatTimeoutMs)}s`;
+          addEvent("SET", state.tabId, state.lastAction);
+          notifyTab(state);
+        }
+
+        sendResponse({
+          ok: true,
+          state: state ? publicState(state) : null,
+          settings: publicSettings(),
+        });
+      });
+    });
+    return true;
+  }
+
+  if (message?.type === "watchdog-popup-set-auto-recover-cooldown") {
+    settings.autoRecoverCooldownMs = clampMs(
+      Number(message.seconds) * 1000,
+      MIN_AUTO_RECOVER_COOLDOWN_MS,
+      MAX_AUTO_RECOVER_COOLDOWN_MS,
+      DEFAULT_AUTO_RECOVER_COOLDOWN_MS,
+    );
+    chrome.storage.local.set({ autoRecoverCooldownMs: settings.autoRecoverCooldownMs }, () => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+
+      getActiveChatGptTab((tab) => {
+        const state = tab?.id ? getTabState(tab.id) : null;
+        if (state) {
+          state.lastActionAt = now();
+          state.lastAction = `auto-recovery cooldown set to ${secondsFromMs(settings.autoRecoverCooldownMs)}s`;
+          addEvent("SET", state.tabId, state.lastAction);
+          notifyTab(state);
+        }
+
+        sendResponse({
+          ok: true,
+          state: state ? publicState(state) : null,
+          settings: publicSettings(),
         });
       });
     });
@@ -1188,7 +1299,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({
             ok: true,
             state: publicState(state),
-            settings: { ...settings, soundVolumePercent: soundVolumePercent() },
+            settings: publicSettings(),
           });
         },
       );
@@ -1215,7 +1326,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({
         ok: true,
         state: publicState(state),
-        settings: { ...settings, soundVolumePercent: soundVolumePercent() },
+        settings: publicSettings(),
       });
     });
     return true;
@@ -1378,7 +1489,7 @@ setInterval(() => {
     if (
       state.pageState !== "reloading" &&
       state.lastHeartbeatAt &&
-      currentTime - state.lastHeartbeatAt > HEARTBEAT_TIMEOUT_MS
+      currentTime - state.lastHeartbeatAt > settings.heartbeatTimeoutMs
     ) {
       if (state.pageState !== "frozen") {
         state.pageState = "frozen";
