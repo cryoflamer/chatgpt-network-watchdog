@@ -22,9 +22,10 @@ import {
 } from "./background/constants.js";
 import { createEventLog } from "./background/event-log.js";
 import { createSettingsStore } from "./background/settings.js";
+import { createTabRegistry } from "./background/tabs.js";
 
 const requests = new Map();
-const tabs = new Map();
+const tabs = createTabRegistry();
 const conversations = new Map();
 const settingsStore = createSettingsStore({
   storage: chrome.storage.local,
