@@ -9,6 +9,7 @@ const lastEl = document.getElementById("last");
 const hintEl = document.getElementById("hint");
 const tabsListEl = document.getElementById("tabsList");
 const eventListEl = document.getElementById("eventList");
+const clearEventsButton = document.getElementById("clearEvents");
 const openFreshChatButton = document.getElementById("openFreshChat");
 const reloadTabButton = document.getElementById("reloadTab");
 const autoRecoverFrozenTabsInput = document.getElementById("autoRecoverFrozenTabs");
@@ -894,6 +895,21 @@ testFrzSoundButton.addEventListener("click", () => requestTestSound("FRZ"));
 testDoneNotificationButton.addEventListener("click", () => requestTestNotification("DONE"));
 testErrNotificationButton.addEventListener("click", () => requestTestNotification("ERR"));
 testFrzNotificationButton.addEventListener("click", () => requestTestNotification("FRZ"));
+clearEventsButton.addEventListener("click", () => {
+  clearEventsButton.disabled = true;
+  sendPopupMessage({ type: "watchdog-popup-clear-events" }, (response) => {
+    clearEventsButton.disabled = false;
+
+    if (!response?.ok) {
+      hintEl.textContent = response?.error || "Unable to clear event log.";
+      return;
+    }
+
+    hintEl.textContent = "Event log cleared.";
+    renderState(response.state || currentState, response.tabs || currentTabs, response.events || []);
+    requestState();
+  });
+});
 
 requestState();
 setInterval(requestState, 1000);

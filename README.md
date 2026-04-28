@@ -27,7 +27,7 @@ The extension observes ChatGPT runtime state from the background worker and expo
 - Updates the extension badge with compact one-letter states: `G`, `D`, `F`, `E`, `S`, `R`, and `L`, plus a tooltip with current state details.
 - Shows popup diagnostics for network state, page heartbeat, generation duration, last request, and errors.
 - Shows a polished multi-tab state view for all open ChatGPT tabs, sorted by active tab, severity, and recency, with concise status labels, activity ages, per-tab **Open fresh**, and **Reload** actions.
-- Shows a readable recent event log for state transitions such as `GEN`, `DONE`, `ERR`, `RLD`, `FRZ`, `STALE`, `STUCK`, `DESYNC`, `OPEN`, and `ALERT`, with tab context and key request details.
+- Shows a readable recent event log for state transitions such as `GEN`, `DONE`, `ERR`, `RLD`, `FRZ`, `STALE`, `STUCK`, `DESYNC`, `OPEN`, and `ALERT`, with tab context and key request details. The popup also includes a **Clear** action for resetting the visible log during debugging.
 - Provides optional quiet sound alerts and desktop notifications for `DONE`, `ERR`, and `FRZ` state changes.
 - Shows an **Open current chat in fresh tab** button after generation completion or freeze detection.
 - Shows a **Reload tab** button for network error states, where opening a fresh tab may not help.

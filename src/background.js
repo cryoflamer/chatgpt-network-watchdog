@@ -147,6 +147,12 @@ function recentEvents(limit = 30, includeDebug = false) {
   }));
 }
 
+function clearEventLog(tabId = null) {
+  eventLog.length = 0;
+  nextEventId = 1;
+  addEvent("SET", tabId, "Event log cleared");
+}
+
 function triggerSoundAlert(state, alertType) {
   if (!settings.soundAlerts || !state?.tabId) {
     return;
@@ -1170,6 +1176,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     getChatGptTabs(sendResponse);
     return true;
   }
+
+if (message?.type === "watchdog-popup-clear-events") {
+  getActiveChatGptTab((tab) => {
+    const state = tab?.id ? getTabState(tab.id) : null;
+    clearEventLog(state?.tabId ?? null);
+    if (state) {
+      state.lastActionAt = now();
+      state.lastAction = "event log cleared";
+      notifyTab(state);
+    }
+
+    getChatGptTabs((tabsResponse) => {
+      sendResponse({
+        ok: true,
+        state: state ? publicState(state) : null,
+        tabs: tabsResponse.tabs || [],
+        events: recentEvents(MAX_EVENT_LOG_ITEMS, settings.debugMode),
+      });
+    });
+  });
+  return true;
+}
 
   if (message?.type === "watchdog-popup-set-auto-recover") {
     settings.autoRecoverFrozenTabs = Boolean(message.enabled);
