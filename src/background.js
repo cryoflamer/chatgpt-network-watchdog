@@ -407,6 +407,10 @@ function badgeForState(state) {
     return { text: "FRZ", color: "#5c2d91" };
   }
 
+  if (state.networkState === "idle" && state.pageState === "frozen") {
+    return { text: "STL", color: "#4b5563" };
+  }
+
   if (state.networkState === "done") {
     return { text: "DONE", color: "#1f6f3a" };
   }
@@ -1240,6 +1244,11 @@ setInterval(() => {
             networkState: state.networkState,
           });
           triggerSoundAlert(state, "FRZ");
+        } else if (state.networkState === "idle") {
+          addEvent("STALE", state.tabId, "Idle tab heartbeat became stale", {
+            msSinceHeartbeat,
+            networkState: state.networkState,
+          });
         } else {
           debugLog("heartbeat missed without freeze alert", {
             tabId: state.tabId,

@@ -131,6 +131,10 @@ function displayStatus(state) {
     return "FRZ";
   }
 
+  if (state.networkState === "idle" && state.pageState === "frozen") {
+    return "STALE";
+  }
+
   if (state.networkState === "done") {
     return "DONE";
   }
@@ -145,6 +149,10 @@ function statusClass(status) {
 
   if (status === "FRZ") {
     return "frozen";
+  }
+
+  if (status === "STALE") {
+    return "stale";
   }
 
   if (status === "STUCK") {
@@ -170,7 +178,8 @@ function statusPriority(status) {
     GEN: 3,
     RLD: 4,
     DONE: 5,
-    IDLE: 6,
+    STALE: 6,
+    IDLE: 7,
   };
 
   return priorities[status] ?? 9;
@@ -230,6 +239,10 @@ function tabActivityLine(tab) {
     const maxAttempts = state.autoRecoverMaxAttempts || 0;
     const attemptText = maxAttempts ? ` · auto ${attempts}/${maxAttempts}` : "";
     return `heartbeat stale ${formatShortAge(state.lastHeartbeatAt)} ago${attemptText}`;
+  }
+
+  if (status === "STALE") {
+    return `inactive ${formatShortAge(state.lastHeartbeatAt)} ago`;
   }
 
   return state.lastHeartbeatAt ? `alive ${formatShortAge(state.lastHeartbeatAt)} ago` : "not attached yet";
@@ -485,7 +498,7 @@ function renderState(state, tabs = currentTabs, events = currentEvents) {
   errorEl.textContent = state.lastError || "none";
   lastEl.textContent = formatBackendPath(state.lastBackendRequestUrl);
 
-  openFreshChatButton.disabled = !(state.networkState === "done" || state.pageState === "frozen");
+  openFreshChatButton.disabled = !(state.networkState === "done");
   reloadTabButton.disabled = state.networkState !== "error";
   autoRecoverFrozenTabsInput.checked = Boolean(state.settings?.autoRecoverFrozenTabs);
   soundAlertsInput.checked = Boolean(state.settings?.soundAlerts);
@@ -497,12 +510,16 @@ function renderState(state, tabs = currentTabs, events = currentEvents) {
     hintEl.textContent = "The ChatGPT tab is reloading. Waiting for the page to reconnect.";
   } else if (state.networkState === "error") {
     hintEl.textContent = "Network error detected. Reloading the current ChatGPT tab is safer than opening a fresh one.";
-  } else if (state.pageState === "frozen") {
+  } else if (state.networkState === "done" && state.pageState === "frozen") {
     const attempts = state.autoRecoverAttempts || 0;
     const maxAttempts = state.autoRecoverMaxAttempts || 0;
     hintEl.textContent = state.settings?.autoRecoverFrozenTabs
-      ? `The page heartbeat is stale. Auto-recovery attempts: ${attempts}/${maxAttempts}.`
-      : "The page heartbeat is stale. Opening a fresh chat is safe.";
+      ? `The page heartbeat is stale after response completion. Auto-recovery attempts: ${attempts}/${maxAttempts}.`
+      : "The response is done, but the page heartbeat is stale. Opening a fresh chat is safe.";
+  } else if (state.networkState === "idle" && state.pageState === "frozen") {
+    hintEl.textContent = "The tab is inactive/stale while idle. This is not a freeze and no recovery action is needed.";
+  } else if (state.pageState === "frozen") {
+    hintEl.textContent = "The page heartbeat is stale, but no completed response is waiting for recovery.";
   } else if (state.networkState === "done") {
     hintEl.textContent = "The response has finished at the network level. Alt+Shift+N opens the current chat in a fresh tab.";
   } else if (state.networkState === "stuck") {

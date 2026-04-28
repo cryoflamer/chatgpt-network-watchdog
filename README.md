@@ -24,10 +24,10 @@ The extension observes ChatGPT runtime state from the background worker and expo
 - Tracks `/backend-api/f/conversation` request start, completion, and errors.
 - Maintains per-tab network state in the extension background worker.
 - Sends a lightweight heartbeat from the ChatGPT tab to detect page responsiveness.
-- Updates the extension badge with compact states: `GEN`, `DONE`, `FRZ`, and `ERR`.
+- Updates the extension badge with compact states: `GEN`, `DONE`, `FRZ`, `ERR`, `STK`, `RLD`, and `STL`.
 - Shows popup diagnostics for network state, page heartbeat, generation duration, last request, and errors.
 - Shows a polished multi-tab state view for all open ChatGPT tabs, sorted by active tab, severity, and recency, with per-tab **Open fresh** and **Reload** actions.
-- Shows a readable recent event log for state transitions such as `GEN`, `DONE`, `ERR`, `RLD`, `FRZ`, `STUCK`, `DESYNC`, `OPEN`, and `ALERT`, with tab context and key request details.
+- Shows a readable recent event log for state transitions such as `GEN`, `DONE`, `ERR`, `RLD`, `FRZ`, `STALE`, `STUCK`, `DESYNC`, `OPEN`, and `ALERT`, with tab context and key request details.
 - Provides optional quiet sound alerts for `DONE`, `ERR`, and `FRZ` state changes.
 - Shows an **Open current chat in fresh tab** button after generation completion or freeze detection.
 - Shows a **Reload tab** button for network error states, where opening a fresh tab may not help.
@@ -108,6 +108,12 @@ OPEN · Fresh chat opened · tab 12 · /c/...
 ```
 
 The log is kept in the background service worker and capped to a 30-item in-memory history so it stays lightweight. Event rows include tab context, duration, errors, request ids, target URLs, and sound volume where relevant.
+
+## STALE vs FRZ
+
+`FRZ` is reserved for the important recovery case: the backend response has completed (`DONE`), but the page heartbeat is stale. That state can trigger sound alerts and optional auto-recovery.
+
+`STALE`/`STL` is neutral: an idle tab stopped sending heartbeat, usually because the browser throttled an inactive page. It is shown for clarity, but it does not play a sound and does not trigger auto-recovery.
 
 ## Generation desync guard
 
