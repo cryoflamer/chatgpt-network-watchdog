@@ -1234,14 +1234,24 @@ setInterval(() => {
           msSinceHeartbeat,
           networkState: state.networkState,
         });
-        addEvent("FRZ", state.tabId, "Page heartbeat missed", {
-          msSinceHeartbeat,
-          networkState: state.networkState,
-        });
-        triggerSoundAlert(state, "FRZ");
+        if (state.networkState === "done") {
+          addEvent("FRZ", state.tabId, "Page heartbeat missed after response completion", {
+            msSinceHeartbeat,
+            networkState: state.networkState,
+          });
+          triggerSoundAlert(state, "FRZ");
+        } else {
+          debugLog("heartbeat missed without freeze alert", {
+            tabId: state.tabId,
+            msSinceHeartbeat,
+            networkState: state.networkState,
+          });
+        }
         changed = true;
       }
-      autoRecoverFrozenTab(state);
+      if (state.networkState === "done") {
+        autoRecoverFrozenTab(state);
+      }
     }
 
     if (markGenerationStuck(state, currentTime)) {
