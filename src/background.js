@@ -24,11 +24,8 @@ import { createBadgeController } from "./background/badge.js";
 import { createRuntimeRouter } from "./background/runtime.js";
 import { createCommandController } from "./background/commands.js";
 import { createTabLifecycleController } from "./background/tab-lifecycle.js";
-import {
-  conversationIdFromUrl,
-  isChatGptBackendRequest,
-  isGenerationRequest,
-} from "./background/network.js";
+import { createNetworkController } from "./background/network-controller.js";
+import { conversationIdFromUrl } from "./background/network.js";
 
 const requests = new Map();
 const tabs = createTabRegistry();
@@ -409,181 +406,24 @@ const {
   getActiveChatGptTab,
 });
 
-chrome.webRequest.onBeforeRequest.addListener(
-  (details) => {
-    if (isChatGptBackendRequest(details)) {
-      debugLog("backend request seen", {
-        requestId: details.requestId,
-        tabId: details.tabId,
-        method: details.method,
-        type: details.type,
-        url: details.url,
-      });
-      markBackendRequest(details);
-    }
-
-    if (!isGenerationRequest(details, GENERATION_PATH) || details.tabId < 0) {
-      return;
-    }
-
-    const state = getTabState(details.tabId);
-    state.networkState = "generating";
-    resetAutoRecovery(state);
-    state.currentRequestId = details.requestId;
-    state.activeGenerationRequestId = details.requestId;
-    state.generationStartedAt = now();
-    state.lastDoneAt = null;
-    state.lastErrorAt = null;
-    state.lastError = null;
-    state.lastStuckAt = null;
-    state.lastBackendRequestAt = state.generationStartedAt;
-    state.lastBackendRequestUrl = details.url;
-
-    requests.set(details.requestId, {
-      tabId: details.tabId,
-      startedAt: state.generationStartedAt,
-      url: details.url,
-    });
-
-    updateConversationFromTab(details.tabId, conversationPatchFromState(state));
-
-    console.log("[CTR:BG] ChatGPT generation started", {
-      requestId: details.requestId,
-      tabId: details.tabId,
-      url: details.url,
-    });
-    addEvent("GEN", details.tabId, "Generation started", {
-      requestId: details.requestId,
-      url: details.url,
-    });
-
-    notifyTab(state);
-  },
-  REQUEST_FILTER,
-);
-
-chrome.webRequest.onCompleted.addListener(
-  (details) => {
-    if (isChatGptBackendRequest(details)) {
-      debugLog("backend request completed", {
-        requestId: details.requestId,
-        tabId: details.tabId,
-        method: details.method,
-        statusCode: details.statusCode,
-        url: details.url,
-      });
-    }
-
-    const request = requests.get(details.requestId);
-    if (!request) {
-      return;
-    }
-
-    const state = getTabState(request.tabId);
-    if (state.activeGenerationRequestId && state.activeGenerationRequestId !== details.requestId) {
-      addEvent("DESYNC", request.tabId, "Ignored completion for stale generation request", {
-        requestId: details.requestId,
-        activeGenerationRequestId: state.activeGenerationRequestId,
-        url: request.url,
-      });
-      requests.delete(details.requestId);
-      notifyTab(state);
-      return;
-    }
-
-    state.networkState = "done";
-    state.currentRequestId = null;
-    state.activeGenerationRequestId = null;
-    state.lastDoneAt = now();
-    state.lastError = null;
-    state.lastStuckAt = null;
-
-    updateConversationFromTab(request.tabId, conversationPatchFromState(state));
-
-    const durationMs = state.lastDoneAt - request.startedAt;
-    console.log("[CTR:BG] ChatGPT generation completed", {
-      requestId: details.requestId,
-      tabId: request.tabId,
-      statusCode: details.statusCode,
-      durationMs,
-      url: request.url,
-    });
-    addEvent("DONE", request.tabId, "Generation completed", {
-      requestId: details.requestId,
-      statusCode: details.statusCode,
-      durationMs,
-      url: request.url,
-    });
-    triggerAlerts(state, "DONE", { durationMs });
-
-    requests.delete(details.requestId);
-    notifyTab(state);
-    autoRecoverFrozenTab(state);
-  },
-  REQUEST_FILTER,
-);
-
-chrome.webRequest.onErrorOccurred.addListener(
-  (details) => {
-    if (isChatGptBackendRequest(details)) {
-      debugLog("backend request error", {
-        requestId: details.requestId,
-        tabId: details.tabId,
-        method: details.method,
-        error: details.error,
-        url: details.url,
-      });
-    }
-
-    const request = requests.get(details.requestId);
-    if (!request) {
-      return;
-    }
-
-    const state = getTabState(request.tabId);
-    if (state.activeGenerationRequestId && state.activeGenerationRequestId !== details.requestId) {
-      addEvent("DESYNC", request.tabId, "Ignored error for stale generation request", {
-        requestId: details.requestId,
-        activeGenerationRequestId: state.activeGenerationRequestId,
-        error: details.error,
-        url: request.url,
-      });
-      requests.delete(details.requestId);
-      notifyTab(state);
-      return;
-    }
-
-    state.networkState = "error";
-    resetAutoRecovery(state);
-    state.currentRequestId = null;
-    state.activeGenerationRequestId = null;
-    state.lastErrorAt = now();
-    state.lastError = details.error;
-    state.lastStuckAt = null;
-
-    updateConversationFromTab(request.tabId, conversationPatchFromState(state));
-
-    const durationMs = state.lastErrorAt - request.startedAt;
-    console.warn("[CTR:BG] ChatGPT generation failed", {
-      requestId: details.requestId,
-      tabId: request.tabId,
-      error: details.error,
-      durationMs,
-      url: request.url,
-    });
-    addEvent("ERR", request.tabId, "Generation failed", {
-      requestId: details.requestId,
-      error: details.error,
-      durationMs,
-      url: request.url,
-    });
-    triggerAlerts(state, "ERR", { durationMs, error: details.error });
-
-    requests.delete(details.requestId);
-    notifyTab(state);
-  },
-  REQUEST_FILTER,
-);
+const networkController = createNetworkController({
+  chromeApi: chrome,
+  generationPath: GENERATION_PATH,
+  requestFilter: REQUEST_FILTER,
+  requests,
+  now,
+  debugLog,
+  addEvent,
+  getTabState,
+  notifyTab,
+  markBackendRequest,
+  resetAutoRecovery,
+  updateConversationFromTab,
+  conversationPatchFromState,
+  triggerAlerts,
+  autoRecoverFrozenTab,
+});
+networkController.attach();
 
 const runtime = createRuntimeRouter({
   chromeApi: chrome,
