@@ -20,12 +20,11 @@ import {
   STUCK_GENERATION_TIMEOUT_MS,
   WATCH_INTERVAL_MS,
 } from "./background/constants.js";
+import { createEventLog } from "./background/event-log.js";
 
 const requests = new Map();
 const tabs = new Map();
 const conversations = new Map();
-const eventLog = [];
-let nextEventId = 1;
 const settings = {
   autoRecoverFrozenTabs: false,
   soundAlerts: false,
@@ -122,38 +121,15 @@ function soundVolumePercent() {
   return Math.round(settings.soundVolume * 100);
 }
 
-function addEvent(type, tabId, message, details = {}) {
-  eventLog.unshift({
-    id: nextEventId,
-    at: now(),
-    type,
-    tabId: typeof tabId === "number" ? tabId : null,
-    message,
-    details,
-  });
-  nextEventId += 1;
-
-  if (eventLog.length > MAX_EVENT_LOG_ITEMS) {
-    eventLog.length = MAX_EVENT_LOG_ITEMS;
-  }
-}
-
-function recentEvents(limit = 30, includeDebug = false) {
-  const visibleEvents = includeDebug
-    ? eventLog
-    : eventLog.filter((event) => !DEBUG_EVENT_TYPES.has(event.type));
-
-  return visibleEvents.slice(0, limit).map((event) => ({
-    ...event,
-    details: { ...event.details },
-  }));
-}
-
-function clearEventLog(tabId = null) {
-  eventLog.length = 0;
-  nextEventId = 1;
-  addEvent("SET", tabId, "Event log cleared");
-}
+const {
+  addEvent,
+  recentEvents,
+  clearEventLog,
+} = createEventLog({
+  now,
+  maxItems: MAX_EVENT_LOG_ITEMS,
+  debugEventTypes: DEBUG_EVENT_TYPES,
+});
 
 function triggerSoundAlert(state, alertType) {
   if (!settings.soundAlerts || !state?.tabId) {
