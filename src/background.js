@@ -5,6 +5,7 @@ const DONE_RESET_MS = 120000;
 const AUTO_RECOVER_DEBOUNCE_MS = 60000;
 const RELOAD_MIN_DISPLAY_MS = 3000;
 const STUCK_GENERATION_TIMEOUT_MS = 90000;
+const STUCK_BACKEND_QUIET_MS = 30000;
 const MAX_EVENT_LOG_ITEMS = 30;
 const SOUND_ALERT_DEBOUNCE_MS = 3000;
 const DEFAULT_SOUND_VOLUME = 0.35;
@@ -1111,8 +1112,18 @@ function markGenerationStuck(state, currentTime) {
     return false;
   }
 
+  if (state.pageState === "reloading" || state.networkState === "reloading") {
+    return false;
+  }
+
   const generationAgeMs = currentTime - state.generationStartedAt;
   if (generationAgeMs < STUCK_GENERATION_TIMEOUT_MS) {
+    return false;
+  }
+
+  const lastActivityAt = Math.max(state.lastBackendRequestAt || 0, state.generationStartedAt || 0);
+  const backendQuietMs = currentTime - lastActivityAt;
+  if (backendQuietMs < STUCK_BACKEND_QUIET_MS) {
     return false;
   }
 
@@ -1124,10 +1135,12 @@ function markGenerationStuck(state, currentTime) {
   console.warn("[CTR:BG] ChatGPT generation marked stuck", {
     tabId: state.tabId,
     generationAgeMs,
+    backendQuietMs,
     requestId: state.currentRequestId,
   });
   addEvent("STUCK", state.tabId, "Generation marked stuck", {
     generationAgeMs,
+    backendQuietMs,
     requestId: state.currentRequestId,
   });
   return true;

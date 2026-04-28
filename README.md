@@ -115,13 +115,13 @@ The watchdog keeps the active generation request id in the background worker. Co
 
 ## Stuck generation detection
 
-If a ChatGPT generation request stays active for longer than 90 seconds without a network completion or error, the watchdog marks it as:
+If a ChatGPT generation request stays active for longer than 90 seconds without a network completion or error, and no backend activity has been seen for at least 30 seconds, the watchdog marks it as:
 
 ```text
 STUCK
 ```
 
-This is distinct from `ERR` and `FRZ`: the request has not failed at the transport level, and the page heartbeat may still be alive, but the generation has been running unusually long.
+This is distinct from `ERR` and `FRZ`: the request has not failed at the transport level, and the page heartbeat may still be alive, but the generation has been running unusually long and the backend has been quiet long enough to avoid false positives while routine ChatGPT backend traffic is still active.
 
 ## Hotkey
 
