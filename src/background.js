@@ -20,6 +20,11 @@ import { createTabRegistry } from "./background/tabs.js";
 import { createAlertController } from "./background/alerts.js";
 import { createRecoveryController } from "./background/recovery.js";
 import { createWatchdogController } from "./background/watchdog.js";
+import {
+  conversationIdFromUrl,
+  isChatGptBackendRequest,
+  isGenerationRequest,
+} from "./background/network.js";
 
 const requests = new Map();
 const tabs = createTabRegistry();
@@ -97,47 +102,6 @@ const {
   soundAlertDebounceMs: SOUND_ALERT_DEBOUNCE_MS,
   notificationDebounceMs: NOTIFICATION_DEBOUNCE_MS,
 });
-
-function isChatGptBackendRequest(details) {
-  try {
-    const url = new URL(details.url);
-    return url.hostname.endsWith("chatgpt.com") && url.pathname.startsWith("/backend-api/");
-  } catch (_error) {
-    return false;
-  }
-}
-
-function isGenerationRequest(details) {
-  try {
-    const url = new URL(details.url);
-    return details.method === "POST" && url.hostname === "chatgpt.com" && url.pathname === GENERATION_PATH;
-  } catch (_error) {
-    return false;
-  }
-}
-
-function conversationIdFromUrl(url) {
-  if (!url) {
-    return null;
-  }
-
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname !== "chatgpt.com") {
-      return null;
-    }
-
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    const markerIndex = parts.indexOf("c");
-    if (markerIndex >= 0 && parts[markerIndex + 1]) {
-      return parts[markerIndex + 1];
-    }
-  } catch (_error) {
-    return null;
-  }
-
-  return null;
-}
 
 function conversationPatchFromState(state) {
   return {
@@ -516,7 +480,7 @@ chrome.webRequest.onBeforeRequest.addListener(
       markBackendRequest(details);
     }
 
-    if (!isGenerationRequest(details) || details.tabId < 0) {
+    if (!isGenerationRequest(details, GENERATION_PATH) || details.tabId < 0) {
       return;
     }
 
