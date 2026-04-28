@@ -21,29 +21,14 @@ import {
   WATCH_INTERVAL_MS,
 } from "./background/constants.js";
 import { createEventLog } from "./background/event-log.js";
+import { createSettingsStore } from "./background/settings.js";
 
 const requests = new Map();
 const tabs = new Map();
 const conversations = new Map();
-const settings = {
-  autoRecoverFrozenTabs: false,
-  soundAlerts: false,
-  desktopNotifications: false,
-  soundVolume: DEFAULT_SOUND_VOLUME,
-  heartbeatTimeoutMs: DEFAULT_HEARTBEAT_TIMEOUT_MS,
-  autoRecoverCooldownMs: DEFAULT_AUTO_RECOVER_COOLDOWN_MS,
-  debugMode: false,
-};
-let lastSoundAlertAt = 0;
-let lastNotificationAt = 0;
-const notificationTargets = new Map();
-
-console.log("[CTR:BG] service worker loaded", {
-  href: chrome.runtime.getURL("src/background.js"),
-});
-
-chrome.storage.local.get(
-  {
+const settingsStore = createSettingsStore({
+  storage: chrome.storage.local,
+  defaults: {
     autoRecoverFrozenTabs: false,
     soundAlerts: false,
     desktopNotifications: false,
@@ -52,27 +37,34 @@ chrome.storage.local.get(
     autoRecoverCooldownMs: DEFAULT_AUTO_RECOVER_COOLDOWN_MS,
     debugMode: false,
   },
-  (stored) => {
-    settings.autoRecoverFrozenTabs = Boolean(stored.autoRecoverFrozenTabs);
-    settings.soundAlerts = Boolean(stored.soundAlerts);
-    settings.desktopNotifications = Boolean(stored.desktopNotifications);
-    settings.debugMode = Boolean(stored.debugMode);
-    settings.soundVolume = clampSoundVolume(stored.soundVolume);
-    settings.heartbeatTimeoutMs = clampMs(
-      stored.heartbeatTimeoutMs,
-      MIN_HEARTBEAT_TIMEOUT_MS,
-      MAX_HEARTBEAT_TIMEOUT_MS,
-      DEFAULT_HEARTBEAT_TIMEOUT_MS,
-    );
-    settings.autoRecoverCooldownMs = clampMs(
-      stored.autoRecoverCooldownMs,
-      MIN_AUTO_RECOVER_COOLDOWN_MS,
-      MAX_AUTO_RECOVER_COOLDOWN_MS,
-      DEFAULT_AUTO_RECOVER_COOLDOWN_MS,
-    );
-    console.log("[CTR:BG] settings loaded", settings);
+  limits: {
+    heartbeatTimeoutMs: {
+      min: MIN_HEARTBEAT_TIMEOUT_MS,
+      max: MAX_HEARTBEAT_TIMEOUT_MS,
+    },
+    autoRecoverCooldownMs: {
+      min: MIN_AUTO_RECOVER_COOLDOWN_MS,
+      max: MAX_AUTO_RECOVER_COOLDOWN_MS,
+    },
   },
-);
+});
+const {
+  settings,
+  clampMs,
+  clampSoundVolume,
+  secondsFromMs,
+  soundVolumePercent,
+  publicSettings,
+} = settingsStore;
+let lastSoundAlertAt = 0;
+let lastNotificationAt = 0;
+const notificationTargets = new Map();
+
+console.log("[CTR:BG] service worker loaded", {
+  href: chrome.runtime.getURL("src/background.js"),
+});
+
+settingsStore.load();
 
 function now() {
   return Date.now();
@@ -86,40 +78,6 @@ function debugLog(message, payload = {}) {
   console.log(`[CTR:BG] ${message}`, payload);
 }
 
-function clampSoundVolume(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return DEFAULT_SOUND_VOLUME;
-  }
-
-  return Math.min(1, Math.max(0, parsed));
-}
-function clampMs(value, min, max, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.min(max, Math.max(min, Math.round(parsed)));
-}
-
-function secondsFromMs(value) {
-  return Math.round(value / 1000);
-}
-
-function publicSettings() {
-  return {
-    ...settings,
-    soundVolumePercent: soundVolumePercent(),
-    heartbeatTimeoutSec: secondsFromMs(settings.heartbeatTimeoutMs),
-    autoRecoverCooldownSec: secondsFromMs(settings.autoRecoverCooldownMs),
-  };
-}
-
-
-function soundVolumePercent() {
-  return Math.round(settings.soundVolume * 100);
-}
 
 const {
   addEvent,
