@@ -28,7 +28,7 @@ The extension observes ChatGPT runtime state from the background worker and expo
 - Shows popup diagnostics for network state, page heartbeat, generation duration, last request, and errors.
 - Shows a polished multi-tab state view for all open ChatGPT tabs, sorted by active tab, severity, and recency, with concise status labels, activity ages, per-tab **Open fresh**, and **Reload** actions.
 - Shows a readable recent event log for state transitions such as `GEN`, `DONE`, `ERR`, `RLD`, `FRZ`, `STALE`, `STUCK`, `DESYNC`, `OPEN`, and `ALERT`, with tab context and key request details.
-- Provides optional quiet sound alerts for `DONE`, `ERR`, and `FRZ` state changes.
+- Provides optional quiet sound alerts and desktop notifications for `DONE`, `ERR`, and `FRZ` state changes.
 - Shows an **Open current chat in fresh tab** button after generation completion or freeze detection.
 - Shows a **Reload tab** button for network error states, where opening a fresh tab may not help.
 - Provides an optional **Auto-recover frozen tabs** mode that opens the current chat URL in a fresh tab only when the backend response is done and the page heartbeat is stale.
@@ -69,7 +69,7 @@ Planned follow-up patches:
 
 1. Add settings for heartbeat and auto-recovery timeouts.
 2. Add defensive handling for regenerated responses.
-3. Tune optional sound alerts and notification preferences.
+3. Add import/export for watchdog settings.
 
 ## Multi-tab view
 
@@ -93,6 +93,17 @@ Sound alerts are off by default and can be enabled from the popup. When enabled,
 - `FRZ`: double tick
 
 Alerts are debounced so state churn cannot create repeated sounds. The popup includes a volume slider and test buttons for DONE, ERR, and FRZ cues. Audio is optional and may require a user gesture in the ChatGPT tab before the browser allows playback.
+
+
+## Desktop notifications
+
+Desktop notifications are off by default and can be enabled from the popup independently from sound alerts. When enabled, the background worker sends system notifications for the same high-signal state changes:
+
+- `DONE`: response completed
+- `ERR`: network error
+- `FRZ`: response done but page heartbeat stale
+
+Notifications are debounced so state churn cannot spam the system notification tray. The popup includes test buttons for DONE, ERR, and FRZ notifications.
 
 ## Event log
 

@@ -10,6 +10,7 @@ const STUCK_GENERATION_TIMEOUT_MS = 90000;
 const STUCK_BACKEND_QUIET_MS = 30000;
 const MAX_EVENT_LOG_ITEMS = 30;
 const SOUND_ALERT_DEBOUNCE_MS = 3000;
+const NOTIFICATION_DEBOUNCE_MS = 3000;
 const DEFAULT_SOUND_VOLUME = 0.35;
 const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
 const DIAGNOSTIC_LOG = false;
@@ -22,19 +23,22 @@ let nextEventId = 1;
 const settings = {
   autoRecoverFrozenTabs: false,
   soundAlerts: false,
+  desktopNotifications: false,
   soundVolume: DEFAULT_SOUND_VOLUME,
 };
 let lastSoundAlertAt = 0;
+let lastNotificationAt = 0;
 
 console.log("[CTR:BG] service worker loaded", {
   href: chrome.runtime.getURL("src/background.js"),
 });
 
 chrome.storage.local.get(
-  { autoRecoverFrozenTabs: false, soundAlerts: false, soundVolume: DEFAULT_SOUND_VOLUME },
+  { autoRecoverFrozenTabs: false, soundAlerts: false, desktopNotifications: false, soundVolume: DEFAULT_SOUND_VOLUME },
   (stored) => {
     settings.autoRecoverFrozenTabs = Boolean(stored.autoRecoverFrozenTabs);
     settings.soundAlerts = Boolean(stored.soundAlerts);
+    settings.desktopNotifications = Boolean(stored.desktopNotifications);
     settings.soundVolume = clampSoundVolume(stored.soundVolume);
     console.log("[CTR:BG] settings loaded", settings);
   },
@@ -107,6 +111,76 @@ function triggerSoundAlert(state, alertType) {
       void chrome.runtime.lastError;
     },
   );
+}
+
+function notificationText(alertType, state, details = {}) {
+  if (alertType === "DONE") {
+    return {
+      title: "ChatGPT response completed",
+      message: `Done after ${((details.durationMs ?? generationDurationMs(state) ?? 0) / 1000).toFixed(1)}s`,
+    };
+  }
+
+  if (alertType === "ERR") {
+    return {
+      title: "ChatGPT network error",
+      message: state.lastError || details.error || "Generation failed",
+    };
+  }
+
+  if (alertType === "FRZ") {
+    return {
+      title: "ChatGPT tab may be frozen",
+      message: "Response is done, but the page heartbeat is stale.",
+    };
+  }
+
+  return {
+    title: "ChatGPT Network Watchdog",
+    message: alertType,
+  };
+}
+
+function triggerDesktopNotification(state, alertType, details = {}) {
+  if ((!settings.desktopNotifications && !details.force) || !state?.tabId) {
+    return;
+  }
+
+  const currentTime = now();
+  if (currentTime - lastNotificationAt < NOTIFICATION_DEBOUNCE_MS) {
+    return;
+  }
+  lastNotificationAt = currentTime;
+
+  const text = notificationText(alertType, state, details);
+  const notificationId = `cnw-${state.tabId}-${alertType.toLowerCase()}-${currentTime}`;
+
+  chrome.notifications.create(
+    notificationId,
+    {
+      type: "basic",
+      iconUrl: "icons/icon128.png",
+      title: text.title,
+      message: text.message,
+      priority: alertType === "ERR" || alertType === "FRZ" ? 1 : 0,
+    },
+    () => {
+      if (chrome.runtime.lastError) {
+        addEvent("ERR", state.tabId, "Desktop notification failed", { error: chrome.runtime.lastError.message });
+        return;
+      }
+
+      addEvent("ALERT", state.tabId, `Desktop notification sent: ${alertType}`, {
+        notificationId,
+        title: text.title,
+      });
+    },
+  );
+}
+
+function triggerAlerts(state, alertType, details = {}) {
+  triggerSoundAlert(state, alertType);
+  triggerDesktopNotification(state, alertType, details);
 }
 
 function isChatGptBackendRequest(details) {
@@ -830,7 +904,7 @@ chrome.webRequest.onCompleted.addListener(
       durationMs,
       url: request.url,
     });
-    triggerSoundAlert(state, "DONE");
+    triggerAlerts(state, "DONE", { durationMs });
 
     requests.delete(details.requestId);
     notifyTab(state);
@@ -893,7 +967,7 @@ chrome.webRequest.onErrorOccurred.addListener(
       durationMs,
       url: request.url,
     });
-    triggerSoundAlert(state, "ERR");
+    triggerAlerts(state, "ERR", { durationMs, error: details.error });
 
     requests.delete(details.requestId);
     notifyTab(state);
@@ -1031,6 +1105,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "watchdog-popup-set-desktop-notifications") {
+    settings.desktopNotifications = Boolean(message.enabled);
+    chrome.storage.local.set({ desktopNotifications: settings.desktopNotifications }, () => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+
+      getActiveChatGptTab((tab) => {
+        const state = tab?.id ? getTabState(tab.id) : null;
+        if (state) {
+          state.lastActionAt = now();
+          state.lastAction = settings.desktopNotifications
+            ? "desktop notifications enabled"
+            : "desktop notifications disabled";
+          addEvent("SET", state.tabId, state.lastAction);
+          notifyTab(state);
+        }
+
+        sendResponse({
+          ok: true,
+          state: state ? publicState(state) : null,
+          settings: { ...settings, soundVolumePercent: soundVolumePercent() },
+        });
+      });
+    });
+    return true;
+  }
+
   if (message?.type === "watchdog-popup-set-sound-volume") {
     settings.soundVolume = clampSoundVolume(message.volume);
     chrome.storage.local.set({ soundVolume: settings.soundVolume }, () => {
@@ -1089,6 +1192,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
         },
       );
+    });
+    return true;
+  }
+
+  if (message?.type === "watchdog-popup-test-notification") {
+    const alertType = typeof message.alertType === "string" ? message.alertType.toUpperCase() : "DONE";
+    if (!["DONE", "ERR", "FRZ"].includes(alertType)) {
+      sendResponse({ ok: false, error: "Unsupported alert type" });
+      return false;
+    }
+
+    getActiveChatGptTab((tab) => {
+      if (!tab?.id) {
+        sendResponse({ ok: false, error: "No ChatGPT tab found" });
+        return;
+      }
+
+      const state = getTabState(tab.id);
+      addEvent("ALERT", state.tabId, `Test desktop notification requested: ${alertType}`);
+      triggerDesktopNotification(state, alertType, { durationMs: generationDurationMs(state), force: true });
+      sendResponse({
+        ok: true,
+        state: publicState(state),
+        settings: { ...settings, soundVolumePercent: soundVolumePercent() },
+      });
     });
     return true;
   }
@@ -1265,7 +1393,7 @@ setInterval(() => {
             msSinceHeartbeat,
             networkState: state.networkState,
           });
-          triggerSoundAlert(state, "FRZ");
+          triggerAlerts(state, "FRZ", { msSinceHeartbeat });
         } else if (state.networkState === "idle") {
           addEvent("STALE", state.tabId, "Idle tab heartbeat became stale", {
             msSinceHeartbeat,

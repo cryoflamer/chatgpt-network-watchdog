@@ -13,11 +13,15 @@ const openFreshChatButton = document.getElementById("openFreshChat");
 const reloadTabButton = document.getElementById("reloadTab");
 const autoRecoverFrozenTabsInput = document.getElementById("autoRecoverFrozenTabs");
 const soundAlertsInput = document.getElementById("soundAlerts");
+const desktopNotificationsInput = document.getElementById("desktopNotifications");
 const soundVolumeInput = document.getElementById("soundVolume");
 const soundVolumeValueEl = document.getElementById("soundVolumeValue");
 const testDoneSoundButton = document.getElementById("testDoneSound");
 const testErrSoundButton = document.getElementById("testErrSound");
 const testFrzSoundButton = document.getElementById("testFrzSound");
+const testDoneNotificationButton = document.getElementById("testDoneNotification");
+const testErrNotificationButton = document.getElementById("testErrNotification");
+const testFrzNotificationButton = document.getElementById("testFrzNotification");
 
 let currentState = null;
 let currentTabs = [];
@@ -401,6 +405,27 @@ function requestTestSound(alertType) {
   });
 }
 
+function setTestNotificationButtonsDisabled(disabled) {
+  testDoneNotificationButton.disabled = disabled;
+  testErrNotificationButton.disabled = disabled;
+  testFrzNotificationButton.disabled = disabled;
+}
+
+function requestTestNotification(alertType) {
+  setTestNotificationButtonsDisabled(true);
+  sendPopupMessage({ type: "watchdog-popup-test-notification", alertType }, (response) => {
+    setTestNotificationButtonsDisabled(false);
+
+    if (!response?.ok) {
+      hintEl.textContent = response?.error || "Unable to test " + alertType + " notification.";
+      return;
+    }
+
+    hintEl.textContent = alertType + " notification requested.";
+    requestState();
+  });
+}
+
 function renderEvents(events) {
   currentEvents = events || [];
   eventListEl.replaceChildren();
@@ -548,6 +573,7 @@ function renderState(state, tabs = currentTabs, events = currentEvents) {
   reloadTabButton.disabled = state.networkState !== "error";
   autoRecoverFrozenTabsInput.checked = Boolean(state.settings?.autoRecoverFrozenTabs);
   soundAlertsInput.checked = Boolean(state.settings?.soundAlerts);
+  desktopNotificationsInput.checked = Boolean(state.settings?.desktopNotifications);
   setSoundVolumeUi(state.settings?.soundVolumePercent ?? Math.round((state.settings?.soundVolume ?? 0.35) * 100));
   renderTabs(tabs);
   renderEvents(events);
@@ -689,6 +715,34 @@ soundAlertsInput.addEventListener("change", () => {
 });
 
 
+desktopNotificationsInput.addEventListener("change", () => {
+  desktopNotificationsInput.disabled = true;
+
+  sendPopupMessage(
+    {
+      type: "watchdog-popup-set-desktop-notifications",
+      enabled: desktopNotificationsInput.checked,
+    },
+    (response) => {
+      desktopNotificationsInput.disabled = false;
+
+      if (!response?.ok) {
+        hintEl.textContent = response?.error || "Unable to update desktop notifications setting.";
+        desktopNotificationsInput.checked = Boolean(currentState?.settings?.desktopNotifications);
+        return;
+      }
+
+      if (response.state) {
+        renderState(response.state);
+      } else if (currentState) {
+        currentState.settings = response.settings || currentState.settings;
+        renderState(currentState);
+      }
+      requestState();
+    },
+  );
+});
+
 soundVolumeInput.addEventListener("input", () => {
   setSoundVolumeUi(soundVolumeInput.value);
 });
@@ -725,6 +779,9 @@ soundVolumeInput.addEventListener("change", () => {
 testDoneSoundButton.addEventListener("click", () => requestTestSound("DONE"));
 testErrSoundButton.addEventListener("click", () => requestTestSound("ERR"));
 testFrzSoundButton.addEventListener("click", () => requestTestSound("FRZ"));
+testDoneNotificationButton.addEventListener("click", () => requestTestNotification("DONE"));
+testErrNotificationButton.addEventListener("click", () => requestTestNotification("ERR"));
+testFrzNotificationButton.addEventListener("click", () => requestTestNotification("FRZ"));
 
 requestState();
 setInterval(requestState, 1000);
