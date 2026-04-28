@@ -76,7 +76,7 @@ The popup exposes lightweight runtime settings stored in `chrome.storage.local`:
 
 - heartbeat timeout: how long a ChatGPT tab can stop sending content-script heartbeat messages before it becomes `FRZ` or `STALE`;
 - auto-recovery cooldown: the minimum delay between automatic fresh-tab recovery attempts for a frozen tab;
-- sound volume, sound alerts, desktop notifications, and auto-recovery toggles.
+- sound volume, sound alerts, desktop notifications, debug mode, and auto-recovery toggles.
 
 These settings make the watchdog easier to tune for slow machines, suspended background tabs, or more aggressive recovery preferences.
 
@@ -128,6 +128,10 @@ OPEN · Fresh chat opened · tab 12 · /c/...
 ```
 
 The log is kept in the background service worker and capped to a 30-item in-memory history so it stays lightweight. Event rows include tab context, duration, errors, request ids, target URLs, and sound volume where relevant.
+
+## Debug mode
+
+Debug mode is off by default. When enabled from the popup, the background worker exposes low-level diagnostic events such as `DESYNC`, `WARN`, and `DBG` in the event log and enables diagnostic service-worker console traces. Normal mode keeps noisy internal diagnostic events hidden while preserving high-signal user states such as `GEN`, `DONE`, `ERR`, `FRZ`, `STALE`, `STUCK`, `RLD`, `OPEN`, and `ALERT`.
 
 ## STALE vs FRZ
 

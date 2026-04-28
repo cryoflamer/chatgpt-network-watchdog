@@ -17,7 +17,7 @@ const MAX_HEARTBEAT_TIMEOUT_MS = 60000;
 const MIN_AUTO_RECOVER_COOLDOWN_MS = 10000;
 const MAX_AUTO_RECOVER_COOLDOWN_MS = 300000;
 const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
-const DIAGNOSTIC_LOG = false;
+const DEBUG_EVENT_TYPES = new Set(["DESYNC", "WARN", "DBG"]);
 
 const requests = new Map();
 const tabs = new Map();
@@ -31,6 +31,7 @@ const settings = {
   soundVolume: DEFAULT_SOUND_VOLUME,
   heartbeatTimeoutMs: DEFAULT_HEARTBEAT_TIMEOUT_MS,
   autoRecoverCooldownMs: DEFAULT_AUTO_RECOVER_COOLDOWN_MS,
+  debugMode: false,
 };
 let lastSoundAlertAt = 0;
 let lastNotificationAt = 0;
@@ -48,11 +49,13 @@ chrome.storage.local.get(
     soundVolume: DEFAULT_SOUND_VOLUME,
     heartbeatTimeoutMs: DEFAULT_HEARTBEAT_TIMEOUT_MS,
     autoRecoverCooldownMs: DEFAULT_AUTO_RECOVER_COOLDOWN_MS,
+    debugMode: false,
   },
   (stored) => {
     settings.autoRecoverFrozenTabs = Boolean(stored.autoRecoverFrozenTabs);
     settings.soundAlerts = Boolean(stored.soundAlerts);
     settings.desktopNotifications = Boolean(stored.desktopNotifications);
+    settings.debugMode = Boolean(stored.debugMode);
     settings.soundVolume = clampSoundVolume(stored.soundVolume);
     settings.heartbeatTimeoutMs = clampMs(
       stored.heartbeatTimeoutMs,
@@ -75,7 +78,7 @@ function now() {
 }
 
 function debugLog(message, payload = {}) {
-  if (!DIAGNOSTIC_LOG) {
+  if (!settings.debugMode) {
     return;
   }
 
@@ -133,8 +136,12 @@ function addEvent(type, tabId, message, details = {}) {
   }
 }
 
-function recentEvents(limit = 30) {
-  return eventLog.slice(0, limit).map((event) => ({
+function recentEvents(limit = 30, includeDebug = false) {
+  const visibleEvents = includeDebug
+    ? eventLog
+    : eventLog.filter((event) => !DEBUG_EVENT_TYPES.has(event.type));
+
+  return visibleEvents.slice(0, limit).map((event) => ({
     ...event,
     details: { ...event.details },
   }));
@@ -1108,7 +1115,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           state: publicState(state),
           tab: { id: tab.id, url: tab.url },
           tabs: tabsResponse.tabs || [],
-          events: recentEvents(),
+          events: recentEvents(MAX_EVENT_LOG_ITEMS, settings.debugMode),
         });
       });
     });
@@ -1236,6 +1243,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           state.lastAction = settings.desktopNotifications
             ? "desktop notifications enabled"
             : "desktop notifications disabled";
+          addEvent("SET", state.tabId, state.lastAction);
+          notifyTab(state);
+        }
+
+        sendResponse({
+          ok: true,
+          state: state ? publicState(state) : null,
+          settings: publicSettings(),
+        });
+      });
+    });
+    return true;
+  }
+
+  if (message?.type === "watchdog-popup-set-debug-mode") {
+    settings.debugMode = Boolean(message.enabled);
+    chrome.storage.local.set({ debugMode: settings.debugMode }, () => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+
+      getActiveChatGptTab((tab) => {
+        const state = tab?.id ? getTabState(tab.id) : null;
+        if (state) {
+          state.lastActionAt = now();
+          state.lastAction = settings.debugMode ? "debug mode enabled" : "debug mode disabled";
           addEvent("SET", state.tabId, state.lastAction);
           notifyTab(state);
         }

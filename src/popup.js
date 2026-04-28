@@ -14,6 +14,7 @@ const reloadTabButton = document.getElementById("reloadTab");
 const autoRecoverFrozenTabsInput = document.getElementById("autoRecoverFrozenTabs");
 const soundAlertsInput = document.getElementById("soundAlerts");
 const desktopNotificationsInput = document.getElementById("desktopNotifications");
+const debugModeInput = document.getElementById("debugMode");
 const soundVolumeInput = document.getElementById("soundVolume");
 const soundVolumeValueEl = document.getElementById("soundVolumeValue");
 const heartbeatTimeoutInput = document.getElementById("heartbeatTimeout");
@@ -584,6 +585,7 @@ function renderState(state, tabs = currentTabs, events = currentEvents) {
   autoRecoverFrozenTabsInput.checked = Boolean(state.settings?.autoRecoverFrozenTabs);
   soundAlertsInput.checked = Boolean(state.settings?.soundAlerts);
   desktopNotificationsInput.checked = Boolean(state.settings?.desktopNotifications);
+  debugModeInput.checked = Boolean(state.settings?.debugMode);
   setSoundVolumeUi(state.settings?.soundVolumePercent ?? Math.round((state.settings?.soundVolume ?? 0.35) * 100));
   setRangeSecondsUi(heartbeatTimeoutInput, heartbeatTimeoutValueEl, state.settings?.heartbeatTimeoutSec ?? 15);
   setRangeSecondsUi(autoRecoverCooldownInput, autoRecoverCooldownValueEl, state.settings?.autoRecoverCooldownSec ?? 60);
@@ -741,6 +743,34 @@ desktopNotificationsInput.addEventListener("change", () => {
       if (!response?.ok) {
         hintEl.textContent = response?.error || "Unable to update desktop notifications setting.";
         desktopNotificationsInput.checked = Boolean(currentState?.settings?.desktopNotifications);
+        return;
+      }
+
+      if (response.state) {
+        renderState(response.state);
+      } else if (currentState) {
+        currentState.settings = response.settings || currentState.settings;
+        renderState(currentState);
+      }
+      requestState();
+    },
+  );
+});
+
+debugModeInput.addEventListener("change", () => {
+  debugModeInput.disabled = true;
+
+  sendPopupMessage(
+    {
+      type: "watchdog-popup-set-debug-mode",
+      enabled: debugModeInput.checked,
+    },
+    (response) => {
+      debugModeInput.disabled = false;
+
+      if (!response?.ok) {
+        hintEl.textContent = response?.error || "Unable to update debug mode setting.";
+        debugModeInput.checked = Boolean(currentState?.settings?.debugMode);
         return;
       }
 
