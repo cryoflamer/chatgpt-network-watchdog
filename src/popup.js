@@ -11,6 +11,7 @@ const eventListEl = document.getElementById("eventList");
 const openFreshChatButton = document.getElementById("openFreshChat");
 const reloadTabButton = document.getElementById("reloadTab");
 const autoRecoverFrozenTabsInput = document.getElementById("autoRecoverFrozenTabs");
+const soundAlertsInput = document.getElementById("soundAlerts");
 
 let currentState = null;
 let currentTabs = [];
@@ -291,6 +292,7 @@ function renderState(state, tabs = currentTabs, events = currentEvents) {
   openFreshChatButton.disabled = !(state.networkState === "done" || state.pageState === "frozen");
   reloadTabButton.disabled = state.networkState !== "error";
   autoRecoverFrozenTabsInput.checked = Boolean(state.settings?.autoRecoverFrozenTabs);
+  soundAlertsInput.checked = Boolean(state.settings?.soundAlerts);
   renderTabs(tabs);
   renderEvents(events);
 
@@ -382,6 +384,34 @@ autoRecoverFrozenTabsInput.addEventListener("change", () => {
       if (!response?.ok) {
         hintEl.textContent = response?.error || "Unable to update auto-recovery setting.";
         autoRecoverFrozenTabsInput.checked = Boolean(currentState?.settings?.autoRecoverFrozenTabs);
+        return;
+      }
+
+      if (response.state) {
+        renderState(response.state);
+      } else if (currentState) {
+        currentState.settings = response.settings || currentState.settings;
+        renderState(currentState);
+      }
+      requestState();
+    },
+  );
+});
+
+soundAlertsInput.addEventListener("change", () => {
+  soundAlertsInput.disabled = true;
+
+  sendPopupMessage(
+    {
+      type: "watchdog-popup-set-sound-alerts",
+      enabled: soundAlertsInput.checked,
+    },
+    (response) => {
+      soundAlertsInput.disabled = false;
+
+      if (!response?.ok) {
+        hintEl.textContent = response?.error || "Unable to update sound alerts setting.";
+        soundAlertsInput.checked = Boolean(currentState?.settings?.soundAlerts);
         return;
       }
 

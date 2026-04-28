@@ -27,7 +27,8 @@ The extension observes ChatGPT runtime state from the background worker and expo
 - Updates the extension badge with compact states: `GEN`, `DONE`, `FRZ`, and `ERR`.
 - Shows popup diagnostics for network state, page heartbeat, generation duration, last request, and errors.
 - Shows a multi-tab state view for all open ChatGPT tabs, with per-tab **Open fresh** and **Reload** actions.
-- Shows a short recent event log for state transitions such as `GEN`, `DONE`, `ERR`, `RLD`, `FRZ`, `STUCK`, and `OPEN`.
+- Shows a short recent event log for state transitions such as `GEN`, `DONE`, `ERR`, `RLD`, `FRZ`, `STUCK`, `OPEN`, and `ALERT`.
+- Provides optional quiet sound alerts for `DONE`, `ERR`, and `FRZ` state changes.
 - Shows an **Open current chat in fresh tab** button after generation completion or freeze detection.
 - Shows a **Reload tab** button for network error states, where opening a fresh tab may not help.
 - Provides an optional **Auto-recover frozen tabs** mode that opens the current chat URL in a fresh tab only when the backend response is done and the page heartbeat is stale.
@@ -68,7 +69,7 @@ Planned follow-up patches:
 
 1. Add settings for heartbeat and auto-recovery timeouts.
 2. Add defensive handling for regenerated responses.
-3. Add optional sound alerts for DONE, FRZ, and ERR state changes.
+3. Tune optional sound alerts and notification preferences.
 
 ## Multi-tab view
 
@@ -82,6 +83,16 @@ STUCK · 90.0s · background · /c/...
 ```
 
 Each tab row has its own **Open fresh** action. The **Reload** action is enabled for tabs in `ERR` state.
+
+## Sound alerts
+
+Sound alerts are off by default and can be enabled from the popup. When enabled, the extension requests a quiet Web Audio cue from the active ChatGPT content script:
+
+- `DONE`: short high tick
+- `ERR`: short low bump
+- `FRZ`: double tick
+
+Alerts are debounced so state churn cannot create repeated sounds. Audio is optional and may require a user gesture in the ChatGPT tab before the browser allows playback.
 
 ## Event log
 

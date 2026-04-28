@@ -6,6 +6,7 @@ const AUTO_RECOVER_DEBOUNCE_MS = 60000;
 const RELOAD_MIN_DISPLAY_MS = 3000;
 const STUCK_GENERATION_TIMEOUT_MS = 90000;
 const MAX_EVENT_LOG_ITEMS = 20;
+const SOUND_ALERT_DEBOUNCE_MS = 3000;
 const REQUEST_FILTER = { urls: ["https://chatgpt.com/*", "https://*.chatgpt.com/*"] };
 const DIAGNOSTIC_LOG = false;
 
@@ -16,14 +17,17 @@ const eventLog = [];
 let nextEventId = 1;
 const settings = {
   autoRecoverFrozenTabs: false,
+  soundAlerts: false,
 };
+let lastSoundAlertAt = 0;
 
 console.log("[CTR:BG] service worker loaded", {
   href: chrome.runtime.getURL("src/background.js"),
 });
 
-chrome.storage.local.get({ autoRecoverFrozenTabs: false }, (stored) => {
+chrome.storage.local.get({ autoRecoverFrozenTabs: false, soundAlerts: false }, (stored) => {
   settings.autoRecoverFrozenTabs = Boolean(stored.autoRecoverFrozenTabs);
+  settings.soundAlerts = Boolean(stored.soundAlerts);
   console.log("[CTR:BG] settings loaded", settings);
 });
 
@@ -60,6 +64,27 @@ function recentEvents(limit = 10) {
     ...event,
     details: { ...event.details },
   }));
+}
+
+function triggerSoundAlert(state, alertType) {
+  if (!settings.soundAlerts || !state?.tabId) {
+    return;
+  }
+
+  const currentTime = now();
+  if (currentTime - lastSoundAlertAt < SOUND_ALERT_DEBOUNCE_MS) {
+    return;
+  }
+  lastSoundAlertAt = currentTime;
+
+  addEvent("ALERT", state.tabId, `Sound alert requested: ${alertType}`);
+  chrome.tabs.sendMessage(
+    state.tabId,
+    { type: "watchdog-play-sound", alertType },
+    () => {
+      void chrome.runtime.lastError;
+    },
+  );
 }
 
 function isChatGptBackendRequest(details) {
@@ -667,6 +692,7 @@ chrome.webRequest.onCompleted.addListener(
       durationMs,
       url: request.url,
     });
+    triggerSoundAlert(state, "DONE");
 
     requests.delete(details.requestId);
     notifyTab(state);
@@ -715,6 +741,7 @@ chrome.webRequest.onErrorOccurred.addListener(
       durationMs,
       url: request.url,
     });
+    triggerSoundAlert(state, "ERR");
 
     requests.delete(details.requestId);
     notifyTab(state);
@@ -813,6 +840,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           addEvent("SET", state.tabId, state.lastAction);
           notifyTab(state);
           autoRecoverFrozenTab(state);
+        }
+
+        sendResponse({
+          ok: true,
+          state: state ? publicState(state) : null,
+          settings: { ...settings },
+        });
+      });
+    });
+    return true;
+  }
+
+  if (message?.type === "watchdog-popup-set-sound-alerts") {
+    settings.soundAlerts = Boolean(message.enabled);
+    chrome.storage.local.set({ soundAlerts: settings.soundAlerts }, () => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+
+      getActiveChatGptTab((tab) => {
+        const state = tab?.id ? getTabState(tab.id) : null;
+        if (state) {
+          state.lastActionAt = now();
+          state.lastAction = settings.soundAlerts ? "sound alerts enabled" : "sound alerts disabled";
+          addEvent("SET", state.tabId, state.lastAction);
+          notifyTab(state);
         }
 
         sendResponse({
@@ -978,6 +1032,7 @@ setInterval(() => {
           msSinceHeartbeat,
           networkState: state.networkState,
         });
+        triggerSoundAlert(state, "FRZ");
         changed = true;
       }
       autoRecoverFrozenTab(state);
